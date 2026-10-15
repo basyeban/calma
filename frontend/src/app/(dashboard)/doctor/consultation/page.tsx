@@ -1,13 +1,16 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, use } from "react";
 import { useRouter } from "next/navigation";
-import { Video, VideoOff, Mic, MicOff, PhoneOff, Loader2, ShieldCheck, FileText, CheckCircle2 } from "lucide-react";
-import { supabase } from "@/lib/supabase";
+import { Video, VideoOff, Mic, MicOff, PhoneOff, Loader2, FileText, CheckCircle2 } from "lucide-react";
+import { realtimeChannel, removeRealtimeChannel, firebaseService } from "@/lib/firebase";
 
-export default function DoctorLiveSessionPage({ params }: { params: { id: string } }) {
+export default function DoctorLiveSessionPage({ params }: { params: Promise<{ id: string }> | { id: string } }) {
   const router = useRouter();
-  const consultationId = params.id;
+  
+  // Unwrapping params safely for Next.js app router versions
+  const resolvedParams = use(params instanceof Promise ? params : Promise.resolve(params));
+  const consultationId = resolvedParams.id;
   const roomId = `ROOM-CLM-${consultationId}`;
 
   const [form, setForm] = useState({
@@ -28,7 +31,6 @@ export default function DoctorLiveSessionPage({ params }: { params: { id: string
   const peerConnectionRef = useRef<RTCPeerConnection | null>(null);
   const channelRef = useRef<any>(null);
 
-  // Inisialisasi WebRTC dan Media Dokter
   useEffect(() => {
     startDoctorWebRTC();
     return () => {
@@ -39,12 +41,21 @@ export default function DoctorLiveSessionPage({ params }: { params: { id: string
   const startDoctorWebRTC = async () => {
     try {
       setErrorMsg(null);
-      const mediaStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+      const mediaStream = await navigator.mediaDevices.getUserMedia({ 
+        video: { width: { ideal: 1280 }, height: { ideal: 720 } }, 
+        audio: true 
+      });
       setStream(mediaStream);
-      if (localVideoRef.current) localVideoRef.current.srcObject = mediaStream;
+      
+      if (localVideoRef.current) {
+        localVideoRef.current.srcObject = mediaStream;
+      }
 
       const pc = new RTCPeerConnection({
-        iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
+        iceServers: [
+          { urls: "stun:stun.l.google.com:19302" },
+          { urls: "stun:stun1.l.google.com:19302" }
+        ],
       });
       peerConnectionRef.current = pc;
 
@@ -60,12 +71,14 @@ export default function DoctorLiveSessionPage({ params }: { params: { id: string
       pc.onconnectionstatechange = () => {
         if (pc.connectionState === "connected") {
           setIsConnected(true);
+        } else if (pc.connectionState === "disconnected" || pc.connectionState === "failed") {
+          setIsConnected(false);
         }
       };
 
       pc.onicecandidate = (event) => {
-        if (event.candidate) {
-          channelRef.current?.send({
+        if (event.candidate && channelRef.current) {
+          channelRef.current.send({
             type: "broadcast",
             event: "ice-candidate",
             payload: { candidate: event.candidate, sender: "doctor" },
@@ -73,40 +86,47 @@ export default function DoctorLiveSessionPage({ params }: { params: { id: string
         }
       };
 
-      const channel = supabase.channel(`consultation_${roomId}`);
+      const channel = realtimeChannel(`consultation_${roomId}`);
       channelRef.current = channel;
 
       channel
         .on("broadcast", { event: "patient-ready" }, async () => {
-          sendOffer(pc, channel);
+          await sendOffer(pc, channel);
         })
-        .on("broadcast", { event: "answer" }, async ({ payload }) => {
+        .on("broadcast", { event: "answer" }, async ({ payload }: { payload: any }) => {
           if (!peerConnectionRef.current) return;
-          await pc.setRemoteDescription(new RTCSessionDescription(payload.answer));
+          try {
+            if (peerConnectionRef.current.signalingState !== "stable") {
+              await pc.setRemoteDescription(new RTCSessionDescription(payload.answer));
+            }
+          } catch (e) {
+            console.error("[DOKTER] Error setting remote description (answer):", e);
+          }
         })
-        .on("broadcast", { event: "ice-candidate" }, async ({ payload }) => {
+        .on("broadcast", { event: "ice-candidate" }, async ({ payload }: { payload: any }) => {
           if (payload.sender !== "doctor" && payload.candidate && pc.remoteDescription) {
             try {
               await pc.addIceCandidate(new RTCIceCandidate(payload.candidate));
             } catch (e) {
-              console.error("[DOKTER] Error Candidate:", e);
+              console.error("[DOKTER] Error adding ICE Candidate:", e);
             }
           }
         })
-        .subscribe(async (status) => {
+        .subscribe(async (status: string) => {
           if (status === "SUBSCRIBED") {
-            sendOffer(pc, channel);
+            await sendOffer(pc, channel);
           }
         });
 
     } catch (err) {
       console.error("Gagal inisialisasi media dokter:", err);
-      setErrorMsg("Gagal mengakses kamera/mikrofon. Periksa izin browser Anda.");
+      setErrorMsg("Gagal mengakses kamera/mikrofon. Pastikan Anda telah memberikan izin pada browser.");
     }
   };
 
   const sendOffer = async (pc: RTCPeerConnection, channel: any) => {
     try {
+      if (pc.signalingState === "closed") return;
       const offer = await pc.createOffer();
       await pc.setLocalDescription(offer);
       channel.send({
@@ -119,7 +139,7 @@ export default function DoctorLiveSessionPage({ params }: { params: { id: string
     }
   };
 
-  // LOOP AUTO-RETRY OFFER: Mengirim Offer ulang setiap 2.5 detik sampai terhubung
+  // Auto-retry offer jika belum terhubung
   useEffect(() => {
     const interval = setInterval(() => {
       if (
@@ -129,12 +149,11 @@ export default function DoctorLiveSessionPage({ params }: { params: { id: string
       ) {
         sendOffer(peerConnectionRef.current, channelRef.current);
       }
-    }, 2500);
+    }, 3000);
 
     return () => clearInterval(interval);
   }, []);
 
-  // CLEANUP TOTAL KELAS DOKTER: Mematikan Hardware Kamera/Mikrofon
   const cleanupWebRTC = () => {
     if (stream) {
       stream.getTracks().forEach((track) => track.stop());
@@ -152,7 +171,7 @@ export default function DoctorLiveSessionPage({ params }: { params: { id: string
       peerConnectionRef.current = null;
     }
     if (channelRef.current) {
-      supabase.removeChannel(channelRef.current);
+      removeRealtimeChannel(channelRef.current);
       channelRef.current = null;
     }
     setIsConnected(false);
@@ -183,24 +202,18 @@ export default function DoctorLiveSessionPage({ params }: { params: { id: string
     setLoading(true);
 
     try {
-      const { error: consultError } = await supabase
-        .from("consultations")
-        .update({
-          status: "completed",
-          diagnosis: form.diagnosis,
-          treatment_notes: form.treatment_notes,
-          prescription: form.prescription
-        })
-        .eq("id", consultationId);
-
-      if (consultError) throw consultError;
+      await firebaseService.completeConsultation(consultationId, {
+        diagnosis: form.diagnosis,
+        treatment_notes: form.treatment_notes,
+        prescription: form.prescription
+      });
 
       alert("Catatan Medis Berhasil Disimpan & Sesi Diakhiri!");
-      cleanupWebRTC(); // Matikan kamera total
+      cleanupWebRTC();
       router.push("/doctor/queue");
     } catch (err) {
-      console.error("Gagal menyimpan rekam medis:", err);
-      alert("Gagal menyimpan rekam medis ke database.");
+      console.error("Gagal menyimpan rekam medis ke Firebase:", err);
+      alert("Gagal menyimpan rekam medis ke database Firebase.");
     } finally {
       setLoading(false);
     }
@@ -213,8 +226,8 @@ export default function DoctorLiveSessionPage({ params }: { params: { id: string
       <div className="bg-teal-900 text-white p-5 rounded-3xl flex justify-between items-center shadow-md">
         <div className="flex items-center space-x-3">
           <span className="flex h-3 w-3 relative">
-            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-rose-400 opacity-75"></span>
-            <span className="relative inline-flex rounded-full h-3 w-3 bg-rose-500"></span>
+            <span className={`animate-ping absolute inline-flex h-full w-full rounded-full ${isConnected ? 'bg-emerald-400' : 'bg-rose-400'} opacity-75`}></span>
+            <span className={`relative inline-flex rounded-full h-3 w-3 ${isConnected ? 'bg-emerald-500' : 'bg-rose-500'}`}></span>
           </span>
           <div>
             <h1 className="font-bold text-base">Konsultasi Live — Sesi #{consultationId}</h1>
@@ -225,7 +238,7 @@ export default function DoctorLiveSessionPage({ params }: { params: { id: string
         </div>
         <button
           onClick={() => {
-            cleanupWebRTC(); // Matikan kamera total
+            cleanupWebRTC();
             router.push("/doctor/queue");
           }}
           className="bg-rose-500 hover:bg-rose-600 px-4 py-2 text-xs font-semibold rounded-xl transition flex items-center gap-1.5"
@@ -247,10 +260,12 @@ export default function DoctorLiveSessionPage({ params }: { params: { id: string
           <div className="bg-slate-950 rounded-3xl aspect-video relative overflow-hidden shadow-xl flex items-center justify-center border border-slate-800">
             <video ref={remoteVideoRef} autoPlay playsInline className="w-full h-full object-cover hidden" />
             
-            <div className="absolute inset-0 flex flex-col items-center justify-center text-slate-400">
-              <Loader2 className="w-8 h-8 animate-spin text-teal-500 mb-2" />
-              <p className="text-xs">Menghubungkan video call dengan pasien...</p>
-            </div>
+            {!isConnected && (
+              <div className="absolute inset-0 flex flex-col items-center justify-center text-slate-400 bg-slate-950/80 z-10">
+                <Loader2 className="w-8 h-8 animate-spin text-teal-500 mb-2" />
+                <p className="text-xs">Menghubungkan video call dengan pasien...</p>
+              </div>
+            )}
 
             {/* Inset Kamera Dokter */}
             <div className="absolute bottom-4 right-4 w-36 h-28 bg-slate-900 border-2 border-teal-500 rounded-2xl overflow-hidden shadow-2xl z-20">

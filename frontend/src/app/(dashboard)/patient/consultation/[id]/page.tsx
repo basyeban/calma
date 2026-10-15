@@ -1,0 +1,41 @@
+"use client";
+
+import { useParams, useRouter } from "next/navigation";
+import ConsultationVideoCall from "@/components/ConsultationVideoCall";
+
+export default function PatientConsultationPage() {
+  const params = useParams<{ id: string }>();
+  const router = useRouter();
+
+  const consultationId = params.id;
+
+  return (
+    <main className="min-h-screen bg-slate-50 p-4 md:p-8">
+      <div className="mx-auto max-w-6xl space-y-6">
+        <button
+          type="button"
+          onClick={() => router.back()}
+          className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100"
+        >
+          ← Kembali
+        </button>
+
+        <header>
+          <h1 className="text-2xl font-bold text-slate-900">
+            Konsultasi dengan Dokter
+          </h1>
+
+          <p className="mt-2 text-slate-600">
+            Gunakan koneksi internet yang stabil dan izinkan
+            akses kamera serta mikrofon.
+          </p>
+        </header>
+
+        <ConsultationVideoCall
+          consultationId={consultationId}
+          role="patient"
+        />
+      </div>
+    </main>
+  );
+}

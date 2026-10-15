@@ -1,79 +1,105 @@
 "use client";
 
-import { useEffect, useState } from "react";
-
-interface Consultation {
-  id: string;
-  code: string;
-  patient_id: string;
-  scheduled_at: string;
-  status: string;
-  price: number;
-}
+import { useState, useEffect } from "react";
+import { useRouter } from "next/navigation";
+import { Users, Video, Calendar, Clock, Sparkles } from "lucide-react";
+import { ref, get } from "firebase/database";
+import { rtdb } from "@/lib/firebase";
 
 export default function DoctorQueuePage() {
-  const [queue, setQueue] = useState<Consultation[]>([]);
+  const router = useRouter();
+  const [patientsQueue, setPatientsQueue] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    // Panggil API FastAPI backend
-    fetch("http://localhost:8000/api/consultations/doctor/DOC_123/today")
-      .then((res) => res.json())
-      .then((resData) => setQueue(resData.data || []))
-      .catch((err) => console.error(err));
+    async function fetchQueue() {
+      try {
+        setLoading(true);
+        const snapshot = await get(ref(rtdb, "consultations"));
+        if (snapshot.exists()) {
+          const val = snapshot.val();
+          const list = Object.keys(val).map((k) => ({
+            id: isNaN(Number(k)) ? k : Number(k),
+            ...val[k],
+          }));
+          setPatientsQueue(list.filter((item) => item.status !== "completed"));
+        } else {
+          setPatientsQueue([
+            {
+              id: 4029,
+              patient_name: "Achmad Daniel",
+              consultation_date: "2026-10-15",
+              consultation_time: "14:00",
+              status: "scheduled",
+              chief_complaint: "Mengeluhkan dada berdebar dan cemas berlebih saat malam hari."
+            }
+          ]);
+        }
+      } catch (err) {
+        console.error("Gagal mengambil antrean pasien:", err);
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    fetchQueue();
   }, []);
 
+  const handleStartConsultation = (consultationId: number | string) => {
+    router.push(`/doctor/live session/${consultationId}`);
+  };
+
   return (
-    <div className="p-8 bg-gray-50 min-h-screen">
-      <div className="flex justify-between items-center mb-6">
+    <div className="max-w-6xl mx-auto space-y-6 p-4 md:p-8 font-sans text-slate-800 bg-slate-50/50 min-h-screen">
+      <div className="bg-white p-6 rounded-3xl border border-slate-100 shadow-sm flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-teal-800">Antrean Pasien Hari Ini</h1>
-          <p className="text-gray-500 text-sm">Daftar konsultasi yang dijadwalkan untuk hari ini</p>
+          <div className="flex items-center gap-2 text-teal-600 font-semibold text-xs tracking-wider uppercase mb-1">
+            <Sparkles className="w-3.5 h-3.5" /> Portal Dokter Spesialis
+          </div>
+          <h1 className="text-2xl font-bold text-slate-900">Daftar Antrean Konsultasi Pasien</h1>
+          <p className="text-xs text-slate-500 mt-0.5">Pilih pasien dari daftar di bawah untuk memulai panggilan video dan konsultasi.</p>
         </div>
-        <button className="px-4 py-2 bg-teal-600 text-white rounded-lg hover:bg-teal-700">
-          Perbarui
-        </button>
       </div>
 
-      <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
-        <table className="w-full text-left text-sm">
-          <thead className="bg-teal-50 text-teal-900 border-b border-teal-100">
-            <tr>
-              <th className="p-4">Kode Sesi</th>
-              <th className="p-4">Jadwal Jam</th>
-              <th className="p-4">Status</th>
-              <th className="p-4 text-right">Aksi</th>
-            </tr>
-          </thead>
-          <tbody>
-            {queue.length === 0 ? (
-              <tr>
-                <td colSpan={4} className="p-4 text-center text-gray-500">
-                  Belum ada antrean untuk hari ini.
-                </td>
-              </tr>
-            ) : (
-              queue.map((item) => (
-                <tr key={item.id} className="border-b hover:bg-gray-50">
-                  <td className="p-4 font-semibold text-teal-700">{item.code}</td>
-                  <td className="p-4">{new Date(item.scheduled_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</td>
-                  <td className="p-4">
-                    <span className="px-3 py-1 text-xs rounded-full bg-emerald-100 text-emerald-700 font-medium">
-                      {item.status}
-                    </span>
-                  </td>
-                  <td className="p-4 text-right">
-                    <a
-                      href={`/doctor/live-session/${item.id}`}
-                      className="px-3 py-1.5 bg-teal-600 text-white text-xs rounded-md hover:bg-teal-700 inline-block"
-                    >
-                      Mulai Sesi
-                    </a>
-                  </td>
-                </tr>
-              ))
-            )}
-          </tbody>
-        </table>
+      <div className="bg-white rounded-3xl border border-slate-100 shadow-sm overflow-hidden p-6">
+        <h2 className="text-xs font-bold uppercase tracking-wider text-slate-400 mb-4 flex items-center gap-2">
+          <Users className="w-4 h-4 text-teal-700" /> Pasien Menunggu Sesi ({patientsQueue.length})
+        </h2>
+
+        {loading ? (
+          <div className="text-center py-12 text-xs text-slate-400">Memuat daftar antrean...</div>
+        ) : patientsQueue.length === 0 ? (
+          <div className="text-center py-12 text-xs text-slate-400">Belum ada antrean pasien saat ini.</div>
+        ) : (
+          <div className="space-y-4">
+            {patientsQueue.map((patient) => (
+              <div key={patient.id} className="p-5 rounded-2xl border border-slate-100 bg-slate-50/60 flex flex-col md:flex-row justify-between items-start md:items-center gap-4 hover:border-teal-200 transition">
+                <div className="space-y-1">
+                  <div className="flex items-center gap-2">
+                    <span className="font-bold text-sm text-slate-900">{patient.patient_name || "Pasien Calma"}</span>
+                    <span className="text-[10px] bg-teal-100 text-teal-800 px-2 py-0.5 rounded font-semibold">ID: #{patient.id}</span>
+                  </div>
+                  <p className="text-xs text-slate-500 flex items-center gap-3">
+                    <span className="flex items-center gap-1"><Calendar className="w-3 h-3 text-slate-400" /> {patient.consultation_date}</span>
+                    <span className="flex items-center gap-1"><Clock className="w-3 h-3 text-slate-400" /> {patient.consultation_time} WIB</span>
+                  </p>
+                  {patient.chief_complaint && (
+                    <p className="text-xs text-slate-600 italic bg-white p-2.5 rounded-xl border border-slate-200/60 mt-2">
+                      "{patient.chief_complaint}"
+                    </p>
+                  )}
+                </div>
+
+                <button
+                  onClick={() => handleStartConsultation(patient.id)}
+                  className="px-5 py-3 bg-teal-700 hover:bg-teal-800 text-white rounded-2xl text-xs font-bold transition shadow-md flex items-center gap-2 shrink-0"
+                >
+                  <Video className="w-4 h-4" /> Pilih & Panggil Pasien
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );

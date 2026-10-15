@@ -302,7 +302,7 @@ export default function PatientHistoryPage() {
         <div className="lg:col-span-5 space-y-3">
           {loading ? (
             <div className="bg-white p-8 rounded-2xl border border-slate-100 text-center text-slate-400 text-xs">
-              Memuat data riwayat dari Supabase...
+              Memuat data riwayat dari Firebase...
             </div>
           ) : filteredData.length === 0 ? (
             <div className="bg-white p-8 rounded-2xl border border-slate-100 text-center text-slate-400 text-xs">

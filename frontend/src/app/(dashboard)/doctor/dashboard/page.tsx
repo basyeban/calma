@@ -3,7 +3,7 @@
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { UserCheck, CheckCircle, Calendar, RefreshCw, Video, Loader2 } from "lucide-react";
-import { supabase } from "@/lib/supabase";
+import { realtimeDb } from "@/lib/firebase";
 
 export default function DoctorDashboardPage() {
   const router = useRouter();
@@ -16,24 +16,10 @@ export default function DoctorDashboardPage() {
       setLoading(true);
       const doctorId = localStorage.getItem("doctor_id") || "6"; // ID Dokter Aktif
 
-      // 1. Ambil data konsultasi dari Supabase berdasarkan dokter yang login
-      const { data: consultations, error } = await supabase
+      // 1. Ambil data konsultasi dari Firebase Realtime Database berdasarkan dokter yang login
+      const { data: consultations, error } = await realtimeDb
         .from("consultations")
-        .select(`
-          id,
-          consultation_date,
-          time_slot,
-          status,
-          patient_profiles (
-            id,
-            gender,
-            users (
-              id,
-              full_name,
-              email
-            )
-          )
-        `)
+        .select("*")
         .eq("doctor_id", doctorId);
 
       if (!error && consultations && consultations.length > 0) {

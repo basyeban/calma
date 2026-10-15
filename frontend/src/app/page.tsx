@@ -3,7 +3,6 @@
 import { useState, useEffect } from "react";
 import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
-import { createClient } from "@supabase/supabase-js";
 import {
   Search,
   Video,
@@ -25,11 +24,7 @@ import {
   BookOpen,
   Loader2,
 } from "lucide-react";
-
-// Inisialisasi Supabase Client (menggunakan kredensial dari project Supabase Anda)
-const supabaseUrl = "https://wzhsvgihhdgkuwamkcasb.supabase.co";
-const supabaseAnonKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Ind6aHN2Z2loaGRna3V3YW1rY2FzYiIsInJvbGUiOiJhbm9uIiwiaWF0IjoxNzI...";
-const supabase = createClient(supabaseUrl, supabaseAnonKey);
+import { realtimeDb, firebaseService } from "@/lib/firebase";
 
 // Komponen SVG Kustom untuk Ikon Sosial Media
 const InstagramIcon = ({ className }: { className?: string }) => (
@@ -93,7 +88,7 @@ export default function LandingPage() {
   // State untuk Interaktif Mood Harian
   const [selectedMood, setSelectedMood] = useState<string>("Cemas");
   
-  // State untuk Data Dokter dari Supabase & Filter
+  // State untuk Data Dokter dari Firebase Realtime & Filter
   const [doctorsList, setDoctorsList] = useState<any[]>([]);
   const [loadingDoctors, setLoadingDoctors] = useState(true);
   const [selectedSpecialization, setSelectedSpecialization] = useState<string>("Semua");
@@ -101,22 +96,19 @@ export default function LandingPage() {
   const [showSpecDropdown, setShowSpecDropdown] = useState(false);
   const [showPriceDropdown, setShowPriceDropdown] = useState(false);
 
-  // Ambil data dokter langsung dari tabel "users" di Supabase dengan filter role = 'doctor'
+  // Ambil data dokter langsung dari Firebase Realtime Database
   useEffect(() => {
-    async function fetchDoctorsFromSupabase() {
+    async function fetchDoctorsFromFirebase() {
       try {
         setLoadingDoctors(true);
-        const { data, error } = await supabase
-          .from("users")
-          .select("*")
-          .eq("role", "doctor"); // Mengambil data dokter dari tabel users[cite: 3]
+        const data = await firebaseService.getDoctors();
 
-        if (error || !data || data.length === 0) {
+        if (!data || data.length === 0) {
           setDoctorsList([
             {
               id: 1,
               name: "dr. Danuar Ilham",
-              role: "Psikiater · Supabase",
+              role: "Psikiater · Firebase",
               rating: "4.8",
               tags: ["Mood", "Stres kerja"],
               priceNum: 250000,
@@ -128,27 +120,27 @@ export default function LandingPage() {
         } else {
           const formattedDoctors = data.map((doc, idx) => ({
             id: doc.id,
-            name: doc.full_name || "Dokter Profesional",
-            role: doc.email?.includes("sp.kj") ? "Psikiater · Supabase" : "Psikolog Klinis · Supabase",
-            rating: "4.9",
-            tags: ["Kecemasan", "Stres Kerja"],
-            priceNum: 150000 + idx * 25000,
-            price: `Rp${(150000 + idx * 25000).toLocaleString("id-ID")}`,
-            spec: idx % 2 === 0 ? "Kecemasan" : "Mood & Stres",
-            img: idx % 2 === 0 
+            name: doc.full_name || doc.name || "Dokter Profesional",
+            role: doc.email?.includes("sp.kj") ? "Psikiater · Firebase" : "Psikolog Klinis · Firebase",
+            rating: doc.rating || "4.9",
+            tags: doc.tags || ["Kecemasan", "Stres Kerja"],
+            priceNum: doc.priceNum || (150000 + idx * 25000),
+            price: doc.price || `Rp${(150000 + idx * 25000).toLocaleString("id-ID")}`,
+            spec: doc.specialization || (idx % 2 === 0 ? "Kecemasan" : "Mood & Stres"),
+            img: doc.img || (idx % 2 === 0 
               ? "https://images.unsplash.com/photo-1594824813575-f938d8794c48?q=80&w=500" 
-              : "https://images.unsplash.com/photo-1622253692010-333f2da6031d?q=80&w=500"
+              : "https://images.unsplash.com/photo-1622253692010-333f2da6031d?q=80&w=500")
           }));
           setDoctorsList(formattedDoctors);
         }
       } catch (err) {
-        console.error("Gagal memuat data dari Supabase:", err);
+        console.error("Gagal memuat data dari Firebase Realtime Database:", err);
       } finally {
         setLoadingDoctors(false);
       }
     }
 
-    fetchDoctorsFromSupabase();
+    fetchDoctorsFromFirebase();
   }, []);
 
   // State untuk Testimoni Carousel Sederhana
@@ -739,7 +731,7 @@ export default function LandingPage() {
       </section>
 
 
-      {/* ================= 5. CARI DOKTER (DARI SUPABASE TABEL "users" ROLE = DOCTOR) ================= */}
+      {/* ================= 5. CARI DOKTER (DARI FIREBASE REALTIME DATABASE) ================= */}
       <section id="dokter" className="py-14 bg-stone-50/80 px-4 sm:px-6">
         <div className="max-w-6xl mx-auto">
           <motion.div 
@@ -750,13 +742,13 @@ export default function LandingPage() {
           >
             <div>
               <span className="text-xs font-bold uppercase tracking-wider text-teal-800">
-                TEMUKAN PARTNER PERJALANANMU (SUPABASE LIVE DATA)
+                TEMUKAN PARTNER PERJALANANMU (FIREBASE REALTIME DATA)
               </span>
               <h2 className="text-2xl sm:text-3xl font-serif font-bold text-slate-900 mt-2 mb-2">
-                Profesional dari Database Supabase. Untukmu.
+                Profesional dari Firebase Realtime Database. Untukmu.
               </h2>
               <p className="text-gray-500 text-xs sm:text-sm">
-                Data ditarik langsung dari tabel <code className="bg-gray-200 px-1.5 py-0.5 rounded text-teal-900 font-mono text-xs">users</code> dengan kriteria role dokter.
+                Data disinkronkan secara langsung dari <code className="bg-gray-200 px-1.5 py-0.5 rounded text-teal-900 font-mono text-xs">Firebase Realtime</code> dengan kriteria role dokter.
               </p>
             </div>
             <button 
@@ -832,7 +824,7 @@ export default function LandingPage() {
           {loadingDoctors ? (
             <div className="text-center py-16 bg-white rounded-3xl border border-gray-200 flex flex-col items-center justify-center">
               <Loader2 className="w-8 h-8 text-teal-800 animate-spin mb-3" />
-              <p className="text-xs text-gray-500">Memuat data dari tabel users Supabase...</p>
+              <p className="text-xs text-gray-500">Memuat data dari Firebase Realtime Database...</p>
             </div>
           ) : filteredDoctors.length === 0 ? (
             <div className="text-center py-12 bg-white rounded-2xl border border-gray-200">
@@ -859,7 +851,7 @@ export default function LandingPage() {
                       className="w-full h-full object-cover"
                     />
                     <span className="absolute top-3 left-3 bg-white/90 backdrop-blur-md px-2.5 py-1 rounded-full text-[10px] font-semibold text-teal-800 shadow-sm">
-                      ✓ Supabase Verified
+                      ✓ Firebase Verified
                     </span>
                   </div>
 
@@ -871,7 +863,7 @@ export default function LandingPage() {
                       <div className="flex items-center space-x-1.5 text-xs text-amber-500 font-semibold mb-3">
                         <Star className="w-3.5 h-3.5 fill-current" />
                         <span>{doc.rating || "4.8"}</span>
-                        <span className="text-gray-400 font-normal">Rating Supabase</span>
+                        <span className="text-gray-400 font-normal">Rating Firebase</span>
                       </div>
 
                       <div className="flex flex-wrap gap-1.5 mb-6">
@@ -1176,7 +1168,7 @@ export default function LandingPage() {
           </div>
         </div>
         <div className="max-w-6xl mx-auto pt-6 border-t border-emerald-800/80 text-emerald-200/70 text-[10px] text-center">
-          <p>© 2026 Calma · Terintegrasi dengan Supabase Backend.</p>
+          <p>© 2026 Calma · Terintegrasi dengan Firebase Realtime Backend.</p>
         </div>
       </footer>
 

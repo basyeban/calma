@@ -1,6 +1,5 @@
 {
-  "dependencies": {
-    "@supabase/ssr": "^0.12.7",
-    "@supabase/supabase-js": "^2.117.2"
-  }
+  "name": "backend",
+  "version": "1.0.0",
+  "private": true
 }

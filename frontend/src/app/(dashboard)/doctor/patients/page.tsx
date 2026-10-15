@@ -15,7 +15,7 @@ import {
   ShieldCheck,
   User
 } from "lucide-react";
-import { supabase } from "@/lib/supabase";
+import { realtimeDb } from "@/lib/firebase";
 
 interface Patient {
   id: string | number;
@@ -51,20 +51,10 @@ export default function MyPatientsPage() {
       
       const currentDoctorId = localStorage.getItem("doctor_id") || "6";
 
-      // Ambil data relasi dari tabel consultations & patient_profiles di Supabase
-      const { data: consultationData, error: dbError } = await supabase
+      // Ambil data dari Firebase Realtime Database
+      const { data: consultationData, error: dbError } = await realtimeDb
         .from("consultations")
-        .select(`
-          patient_profiles (
-            id,
-            gender,
-            users (
-              id,
-              full_name,
-              email
-            )
-          )
-        `)
+        .select("*")
         .eq("doctor_id", currentDoctorId);
 
       if (!dbError && consultationData && consultationData.length > 0) {

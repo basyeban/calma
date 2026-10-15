@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { CreditCard, Users, Star, Loader2, PlusCircle } from "lucide-react";
-import { supabase } from "@/lib/supabase";
+import { firebaseService } from "@/lib/firebase";
 
 export default function DoctorReportsPage() {
   const [report, setReport] = useState<any>(null);
@@ -13,7 +13,7 @@ export default function DoctorReportsPage() {
   // State input nominal pencairan fleksibel
   const [customAmount, setCustomAmount] = useState<string>("1000000");
 
-  // State riwayat pencairan dari database Supabase
+  // State riwayat pencairan dari Firebase Realtime Database
   const [payoutsList, setPayoutsList] = useState<any[]>([]);
 
   useEffect(() => {
@@ -52,14 +52,9 @@ export default function DoctorReportsPage() {
           });
         }
 
-        // 3. Fetch Seluruh Riwayat Pencairan dari Supabase
-        const { data: payoutsData, error } = await supabase
-          .from("payouts")
-          .select("*")
-          .eq("doctor_id", docId)
-          .order("created_at", { ascending: false });
-
-        if (!error && payoutsData) {
+        // 3. Fetch Seluruh Riwayat Pencairan dari Firebase Realtime Database
+        const payoutsData = await firebaseService.getPayouts(docId);
+        if (payoutsData) {
           setPayoutsList(payoutsData);
         }
       } catch (error) {
@@ -102,29 +97,21 @@ export default function DoctorReportsPage() {
 
     setIsSubmittingPayout(true);
     try {
-      const { data, error } = await supabase
-        .from("payouts")
-        .insert([
-          {
-            doctor_id: currentDoctor.id,
-            doctor_name: currentDoctor.name,
-            doctor_specialty: "Psikiatri Dewasa",
-            bank_name: "Bank Mandiri",
-            account_number: "1380029381029",
-            amount: numericAmount,
-            status: "pending"
-          }
-        ])
-        .select()
-        .single();
-
-      if (error) throw error;
+      const data = await firebaseService.createPayout({
+        doctor_id: currentDoctor.id,
+        doctor_name: currentDoctor.name,
+        doctor_specialty: "Psikiatri Dewasa",
+        bank_name: "Bank Mandiri",
+        account_number: "1380029381029",
+        amount: numericAmount,
+        status: "pending"
+      });
 
       alert("Pengajuan pencairan dana berhasil dikirim ke Admin!");
       setPayoutsList((prev) => [data, ...prev]);
       setCustomAmount("1000000"); // Reset nilai input
     } catch (err: any) {
-      console.error("Gagal mengajukan pencairan:", err);
+      console.error("Gagal mengajukan pencairan via Firebase:", err);
       alert(`Terjadi kesalahan: ${err.message || "Gagal mengajukan pencairan."}`);
     } finally {
       setIsSubmittingPayout(false);

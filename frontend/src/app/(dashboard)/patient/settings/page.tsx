@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, ChangeEvent, useEffect } from "react";
+import { useState, useRef, ChangeEvent, useEffect, Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import {
   User,
@@ -21,10 +21,8 @@ import {
   Calendar,
   Pill,
 } from "lucide-react";
-// Impor klien supabase Anda (sesuaikan path foldernya dengan project Anda)
-// import { supabase } from "@/utils/supabase";
 
-export default function PatientSettingsPage() {
+function PatientSettingsContent() {
   const searchParams = useSearchParams();
   const tabQuery = searchParams.get("tab") as
     | "profile"
@@ -527,5 +525,19 @@ export default function PatientSettingsPage() {
         </div>
       </form>
     </div>
+  );
+}
+
+export default function PatientSettingsPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="flex items-center justify-center min-h-[400px]">
+          <Loader2 className="w-6 h-6 animate-spin text-teal-700" />
+        </div>
+      }
+    >
+      <PatientSettingsContent />
+    </Suspense>
   );
 }

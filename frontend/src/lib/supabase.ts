@@ -1,6 +1,6 @@
-import { createClient } from "@supabase/supabase-js";
+// Re-export dari Firebase Realtime Client untuk migrasi lancar
+import { firebaseClient, realtimeChannel, removeRealtimeChannel, rtdb, auth } from "./firebase";
 
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
-
-export const supabase = createClient(supabaseUrl, supabaseAnonKey);
+export const supabase = firebaseClient;
+export { realtimeChannel, removeRealtimeChannel, rtdb, auth };
+export default firebaseClient;

@@ -17,7 +17,7 @@ import {
   Loader2,
   DollarSign
 } from "lucide-react";
-import { supabase } from "@/lib/supabase";
+import { firebaseService } from "@/lib/firebase";
 
 interface PayoutRequest {
   id: number;
@@ -42,20 +42,16 @@ export default function LaporanKeuanganPage() {
   // Total Alokasi Payout Dokter Awal Platform (80% dari Rp 148.500.000)
   const INITIAL_DOCTOR_PAYOUT_POOL = 118800000;
 
-  // Fetch data pengajuan pencairan asli dari Supabase
+  // Fetch data pengajuan pencairan asli dari Firebase Realtime Database
   const fetchPayouts = async () => {
     try {
       setLoading(true);
-      const { data, error } = await supabase
-        .from("payouts")
-        .select("*")
-        .order("created_at", { ascending: false });
-
-      if (!error && data) {
+      const data = await firebaseService.getPayouts();
+      if (data) {
         setPayoutRequests(data);
       }
     } catch (err) {
-      console.error("Gagal mengambil data payout:", err);
+      console.error("Gagal mengambil data payout dari Firebase:", err);
     } finally {
       setLoading(false);
     }
@@ -85,12 +81,7 @@ export default function LaporanKeuanganPage() {
     setIsProcessing(id);
 
     try {
-      const { error } = await supabase
-        .from("payouts")
-        .update({ status: "approved", approved_at: new Date().toISOString() })
-        .eq("id", id);
-
-      if (error) throw error;
+      await firebaseService.updatePayoutStatus(id, "approved");
 
       setPayoutRequests((prev) =>
         prev.map((req) => (req.id === id ? { ...req, status: "approved" } : req))
@@ -111,12 +102,7 @@ export default function LaporanKeuanganPage() {
     setIsProcessing(id);
 
     try {
-      const { error } = await supabase
-        .from("payouts")
-        .update({ status: "rejected" })
-        .eq("id", id);
-
-      if (error) throw error;
+      await firebaseService.updatePayoutStatus(id, "rejected");
 
       setPayoutRequests((prev) =>
         prev.map((req) => (req.id === id ? { ...req, status: "rejected" } : req))

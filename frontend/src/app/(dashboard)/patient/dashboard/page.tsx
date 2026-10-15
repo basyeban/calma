@@ -23,14 +23,14 @@ import {
   Loader2,
   UserCheck
 } from "lucide-react";
-import { supabase } from "@/lib/supabase";
+import { firebaseService } from "@/lib/firebase";
 
 export default function PatientDashboard() {
   const [screening, setScreening] = useState<any>(null);
   const [fullName, setFullName] = useState<string>("");
   const [loadingName, setLoadingName] = useState<boolean>(true);
 
-  // State untuk Sesi Mendatang Dinamis dari Supabase
+  // State untuk Sesi Mendatang Dinamis dari Firebase Realtime Database
   const [upcomingSession, setUpcomingSession] = useState<any>(null);
   const [loadingSession, setLoadingSession] = useState<boolean>(true);
 
@@ -85,43 +85,9 @@ export default function PatientDashboard() {
           setScreening(resData.data);
         }
 
-        // 3. Fetch Sesi Mendatang Dinamis dari Database Supabase
-        const { data: sessionData, error: sessionError } = await supabase
-          .from("consultations")
-          .select(`
-            id,
-            consultation_date,
-            consultation_time,
-            status,
-            doctor_id,
-            users:doctor_id (
-              id,
-              full_name,
-              email
-            )
-          `)
-          .eq("status", "scheduled")
-          .order("consultation_date", { ascending: true })
-          .limit(1)
-          .single();
-
-        if (!sessionError && sessionData) {
-          const doctorInfo: any = sessionData.users;
-          setUpcomingSession({
-            id: sessionData.id,
-            doctorName: doctorInfo?.full_name || "Dokter Spesialis",
-            doctorTitle: doctorInfo?.full_name?.toLowerCase().includes("vicky") 
-              ? "Spesialis Psikiatri Anak & Remaja" 
-              : "Spesialis Kesehatan Jiwa & Adiksi",
-            date: sessionData.consultation_date || "Hari Ini",
-            time: sessionData.consultation_time ? `${sessionData.consultation_time} WIB` : "Jadwal Dikonfirmasi",
-            avatar: doctorInfo?.full_name 
-              ? doctorInfo.full_name.split(" ").map((n: string) => n[0]).join("").substring(0, 2).toUpperCase() 
-              : "DR"
-          });
-        } else {
-          setUpcomingSession(null);
-        }
+        // 3. Fetch Sesi Mendatang Dinamis dari Firebase Realtime Database
+        const sessionData = await firebaseService.getUpcomingPatientSession();
+        setUpcomingSession(sessionData);
 
       } catch (err) {
         console.error("Gagal memuat data profil atau sesi pasien:", err);

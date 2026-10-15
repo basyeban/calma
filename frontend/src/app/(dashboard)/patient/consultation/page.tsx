@@ -24,7 +24,7 @@ import {
   FileCheck,
   Image as ImageIcon
 } from "lucide-react";
-import { supabase } from "@/lib/supabase";
+import { realtimeChannel, removeRealtimeChannel, firebaseService, listenIncomingCalls } from "@/lib/firebase";
 
 export default function PatientConsultationPage() {
   const [activeTab, setActiveTab] = useState<"booking" | "payment" | "waiting" | "live">("booking");
@@ -70,21 +70,14 @@ export default function PatientConsultationPage() {
 
   const availableTimeSlots = ["09:00", "10:30", "14:00", "15:30"];
 
-  // Fetch daftar dokter dari Supabase
+  // Fetch daftar dokter dari Firebase Realtime Database
   useEffect(() => {
     async function fetchDoctorsAndBookings() {
       try {
         setLoadingDoctors(true);
-        const { data: usersData, error: usersError } = await supabase
-          .from("users")
-          .select("id, full_name, role")
-          .eq("role", "doctor");
+        const doctorsData = await firebaseService.getDoctors();
 
-        const { data: consultData } = await supabase
-          .from("consultations")
-          .select("doctor_id, consultation_time");
-
-        if (usersError || !usersData || usersData.length === 0) {
+        if (!doctorsData || doctorsData.length === 0) {
           const fallback = [
             { 
               id: 6, 
@@ -108,29 +101,21 @@ export default function PatientConsultationPage() {
           setDoctors(fallback);
           setSelectedDoctor(fallback[0]);
         } else {
-          const formatted = usersData.map((doc: any) => {
-            const doctorBookings = consultData
-              ? consultData
-                  .filter((c: any) => c.doctor_id === doc.id)
-                  .map((c: any) => c.consultation_time)
-              : [];
-
-            return {
-              id: doc.id,
-              name: doc.full_name || "Dokter Spesialis",
-              title: "Spesialis Kesehatan Jiwa & Psikiatri",
-              priceNum: 250000,
-              price: "Rp 250.000",
-              avatar: doc.full_name ? doc.full_name.split(" ").map((n: string) => n[0]).join("").substring(0, 2).toUpperCase() : "DR",
-              bookedTimes: doctorBookings.length > 0 ? doctorBookings : ["10:30"]
-            };
-          });
+          const formatted = doctorsData.map((doc: any) => ({
+            id: doc.id,
+            name: doc.full_name || doc.name || "Dokter Spesialis",
+            title: doc.title || "Spesialis Kesehatan Jiwa & Psikiatri",
+            priceNum: doc.priceNum || 250000,
+            price: doc.price || "Rp 250.000",
+            avatar: doc.avatar || (doc.full_name ? doc.full_name.split(" ").map((n: string) => n[0]).join("").substring(0, 2).toUpperCase() : "DR"),
+            bookedTimes: doc.bookedTimes || ["10:30"]
+          }));
 
           setDoctors(formatted);
           setSelectedDoctor(formatted[0]);
         }
       } catch (err) {
-        console.error("Gagal mengambil data dokter:", err);
+        console.error("Gagal mengambil data dokter dari Firebase:", err);
       } finally {
         setLoadingDoctors(false);
       }
@@ -154,52 +139,36 @@ export default function PatientConsultationPage() {
     }
   };
 
-  // SYSTEM NOTIFIKASI PANGGILAN REAL-TIME PASIEN (LOKAL & GLOBAL CHANNEL)
+  // SYSTEM NOTIFIKASI PANGGILAN REAL-TIME PASIEN
   useEffect(() => {
     if (activeTab === "waiting") {
       const activeId = consultationId || Number(localStorage.getItem("active_consultation_id")) || 4029;
       const roomId = `ROOM-CLM-${activeId}`;
 
-      console.log(`[PASIEN] Mendengarkan Panggilan di Room Spesifik: ${roomId} dan Global Channel`);
+      const unsubscribeIncoming = listenIncomingCalls(activeId, (data) => {
+        setIsIncomingCall(true);
+      });
 
-      // 1. Channel Spesifik Sesi Pasien
-      const channel = supabase.channel(`consultation_${roomId}`);
+      const channel = realtimeChannel(`consultation_${roomId}`);
       channelRef.current = channel;
 
       channel
         .on("broadcast", { event: "doctor-calling" }, (payload) => {
-          console.log("[PASIEN] Panggilan Broadcast Spesifik Diterima:", payload);
           setIsIncomingCall(true);
         })
         .subscribe();
 
-      // 2. Channel Global Fallback (Menangani Kasus Beda ID)
-      const globalChannel = supabase.channel("global_consultation_calls");
+      const globalChannel = realtimeChannel("global_consultation_calls");
       globalChannel
         .on("broadcast", { event: "doctor-calling" }, (payload) => {
-          console.log("[PASIEN] Panggilan Broadcast Global Diterima:", payload);
           setIsIncomingCall(true);
         })
         .subscribe();
 
-      // 3. Polling Database Check
-      const intervalCheck = setInterval(async () => {
-        const { data } = await supabase
-          .from("consultations")
-          .select("status")
-          .or(`id.eq.${activeId},status.eq.calling`)
-          .limit(1);
-
-        if (data && data.length > 0 && data[0].status === "calling") {
-          console.log("[PASIEN] Status DB 'calling', Munculkan Modal!");
-          setIsIncomingCall(true);
-        }
-      }, 2000);
-
       return () => {
-        supabase.removeChannel(channel);
-        supabase.removeChannel(globalChannel);
-        clearInterval(intervalCheck);
+        unsubscribeIncoming();
+        removeRealtimeChannel(channel);
+        removeRealtimeChannel(globalChannel);
       };
     }
   }, [activeTab, consultationId]);
@@ -250,7 +219,7 @@ export default function PatientConsultationPage() {
         }
       };
 
-      const channel = supabase.channel(`consultation_${roomId}`);
+      const channel = realtimeChannel(`consultation_${roomId}`);
       channelRef.current = channel;
 
       channel
@@ -291,7 +260,6 @@ export default function PatientConsultationPage() {
     }
   };
 
-  // Pembersihan Total Kamera & Mikrofon Pasien
   const cleanupWebRTC = () => {
     if (stream) {
       stream.getTracks().forEach((track) => track.stop());
@@ -309,7 +277,7 @@ export default function PatientConsultationPage() {
       peerConnectionRef.current = null;
     }
     if (channelRef.current) {
-      supabase.removeChannel(channelRef.current);
+      removeRealtimeChannel(channelRef.current);
       channelRef.current = null;
     }
     setIsIncomingCall(false);
@@ -369,6 +337,7 @@ export default function PatientConsultationPage() {
     setActiveTab("payment");
   };
 
+  // FUNGSI PENGIRIMAN PEMBAYARAN DENGAN PROTEKSI TIMEOUT 3 DETIK
   const handleSubmitPaymentProof = async (e: React.FormEvent) => {
     e.preventDefault();
 
@@ -380,39 +349,37 @@ export default function PatientConsultationPage() {
     setIsProcessingPayment(true);
 
     try {
-      const { data: consultData, error: consultError } = await supabase
-        .from("consultations")
-        .insert([
-          {
-            doctor_id: Number(bookedDoctor?.id || 6),
-            consultation_time: selectedTime,
-            consultation_date: selectedDate,
-            status: "scheduled",
-            patient_name: "Achmad Daniel"
-          }
-        ])
-        .select()
-        .single();
+      const savePromise = (async () => {
+        const consultData = await firebaseService.createConsultation({
+          doctor_id: Number(bookedDoctor?.id || 6),
+          consultation_time: selectedTime,
+          consultation_date: selectedDate,
+          status: "scheduled",
+          patient_name: "Achmad Daniel"
+        });
 
-      if (consultError) throw consultError;
+        const consultId = consultData?.id || Date.now();
+        setConsultationId(consultId);
+        localStorage.setItem("active_consultation_id", String(consultId));
 
-      if (consultData && consultData.id) {
-        setConsultationId(consultData.id);
-        localStorage.setItem("active_consultation_id", String(consultData.id));
+        await firebaseService.createPayment({
+          consultation_id: consultId,
+          doctor_name: bookedDoctor?.name || "Dr. Danuar Ilham, Sp.KJ",
+          amount: bookedDoctor?.priceNum || 250000,
+          payment_method: paymentMethod.toUpperCase(),
+          proof_url: uploadPreview || "https://placeholder.com/proof.jpg",
+          status: "pending_verification"
+        });
+      })();
 
-        await supabase.from("payments").insert([
-          {
-            consultation_id: consultData.id,
-            doctor_name: bookedDoctor?.name || "Dr. Danuar Ilham, Sp.KJ",
-            amount: bookedDoctor?.priceNum || 250000,
-            payment_method: paymentMethod.toUpperCase(),
-            proof_url: uploadPreview || "https://placeholder.com/proof.jpg",
-            status: "pending_verification"
-          }
-        ]);
-      }
+      // Race antara proses simpan database dengan timeout 3 detik
+      await Promise.race([
+        savePromise,
+        new Promise((_, reject) => setTimeout(() => reject(new Error("Timeout saving data")), 3000))
+      ]);
+
     } catch (err: any) {
-      console.error("Gagal menyimpan pembayaran:", err?.message || err);
+      console.warn("Gagal menyimpan ke Firebase (Timeout/Error), menggunakan fallback lokal:", err);
       const fallbackId = 4029;
       setConsultationId(fallbackId);
       localStorage.setItem("active_consultation_id", String(fallbackId));
@@ -458,7 +425,7 @@ export default function PatientConsultationPage() {
                 }
                 setActiveTab("waiting");
               }} 
-              className={`flex-1 sm:flex-none px-5 py-2.5 rounded-xl text-xs font-semibold flex items-center justify-center gap-2 transition-all ${activeTab === "live" || activeTab === "waiting" ? "bg-teal-700 text-white shadow-md shadow-teal-700/20" : "text-slate-600 hover:text-slate-900"}`}
+              className={`flex-1 sm:flex-none px-5 py-2.5 rounded-xl text-xs font-semibold flex items-center justify-center gap-2 transition-all ${activeTab === "live" ? "bg-teal-700 text-white shadow-md shadow-teal-700/20" : "text-slate-600 hover:text-slate-900"}`}
             >
               <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" /> Status Sesi
             </button>
@@ -473,8 +440,8 @@ export default function PatientConsultationPage() {
             <h2 className="text-xs font-bold uppercase tracking-wider text-slate-400 px-1">Pilih Psikiater / Dokter</h2>
             
             {loadingDoctors ? (
-              <div className="bg-white p-8 rounded-3xl border border-slate-100 text-center text-xs text-slate-400">
-                Memuat daftar dokter...
+              <div className="bg-white p-8 rounded-3xl border border-slate-100 text-center text-xs text-slate-400 flex items-center justify-center gap-2">
+                <Loader2 className="w-4 h-4 animate-spin text-teal-600" /> Memuat daftar dokter...
               </div>
             ) : (
               doctors.map((doc) => (
@@ -855,7 +822,7 @@ export default function PatientConsultationPage() {
         </div>
       )}
 
-      {/* MODAL POP-UP PANGGILAN MASUK (AKTIF SANGAT INSTAN) */}
+      {/* MODAL POP-UP PANGGILAN MASUK */}
       {isIncomingCall && (
         <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-md z-50 flex items-center justify-center p-4">
           <div className="bg-white w-full max-w-sm rounded-3xl p-8 shadow-2xl text-center space-y-6 border border-slate-100">
