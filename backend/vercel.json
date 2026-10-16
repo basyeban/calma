@@ -1,14 +1,15 @@
 {
   "version": 2,
-  "functions": {
-    "backend/main.py": {
-      "maxDuration": 10
+  "builds": [
+    {
+      "src": "main.py",
+      "use": "@vercel/python"
     }
-  },
+  ],
   "routes": [
     {
       "src": "/(.*)",
-      "dest": "backend/main.py"
+      "dest": "main.py"
     }
   ]
 }
