@@ -1,0 +1,14 @@
+FROM python:3.10-slim
+
+WORKDIR /app
+
+# Install dependencies
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy seluruh source code backend
+COPY . .
+
+# Cloud Run menyediakan port melalui environment variable $PORT (default 8080)
+# Perintah start command menjalankan uvicorn ke 0.0.0.0 dan port dinamis
+CMD exec uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8080}
