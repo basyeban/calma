@@ -46,7 +46,7 @@ export default function DoctorQueuePage() {
   }, []);
 
   const handleStartConsultation = (consultationId: number | string) => {
-    router.push(`/doctor/live session/${consultationId}`);
+    router.push(`/doctor/live-session/${consultationId}`);
   };
 
   return (

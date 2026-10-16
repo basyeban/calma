@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useEffect } from "react";
 import {
   Video,
   MessageSquare,
@@ -25,6 +25,44 @@ import {
   Image as ImageIcon
 } from "lucide-react";
 import { realtimeChannel, removeRealtimeChannel, firebaseService, listenIncomingCalls } from "@/lib/firebase";
+import ConsultationVideoCall from "@/components/ConsultationVideoCall";
+import { onValue, ref, update, type DataSnapshot } from "firebase/database";
+import { rtdb } from "@/lib/firebase";
+
+// Fungsi ketika Dokter klik tombol Panggil Pasien
+const handleCallPatient = async (consultationId: string) => {
+  const consultRef = ref(rtdb, `consultations/${consultationId}`);
+  
+  // Ubah status agar pasien menerima notifikasi panggilan masuk
+  await update(consultRef, {
+    status: "calling", // atau "in_session" jika ingin pasien langsung masuk tanpa perlu pencet 'Terima'
+    updatedAt: Date.now(),
+  });
+};
+
+/** Mencegah tombol pembayaran terus berputar jika request tidak merespons. */
+function withTimeout<T>(
+  promise: Promise<T>,
+  label: string,
+  timeoutMs = 15000
+): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(new Error(`${label} tidak merespons dalam 15 detik. Periksa koneksi backend/database.`));
+    }, timeoutMs);
+
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error: unknown) => {
+        clearTimeout(timer);
+        reject(error);
+      }
+    );
+  });
+}
 
 export default function PatientConsultationPage() {
   const [activeTab, setActiveTab] = useState<"booking" | "payment" | "waiting" | "live">("booking");
@@ -34,7 +72,7 @@ export default function PatientConsultationPage() {
   // Booking states
   const [selectedDoctor, setSelectedDoctor] = useState<any>(null);
   const [bookedDoctor, setBookedDoctor] = useState<any>(null);
-  const [consultationId, setConsultationId] = useState<number | null>(null);
+  const [consultationId, setConsultationId] = useState<string | number | null>(null);
   const [selectedType, setSelectedType] = useState<"video" | "chat">("video");
   const [selectedDate, setSelectedDate] = useState("2026-10-15");
   const [selectedTime, setSelectedTime] = useState("09:00");
@@ -51,16 +89,6 @@ export default function PatientConsultationPage() {
   const [isIncomingCall, setIsIncomingCall] = useState(false);
 
   // WebRTC & Media States
-  const localVideoRef = useRef<HTMLVideoElement | null>(null);
-  const remoteVideoRef = useRef<HTMLVideoElement | null>(null);
-  const peerConnectionRef = useRef<RTCPeerConnection | null>(null);
-  const channelRef = useRef<any>(null);
-
-  const [stream, setStream] = useState<MediaStream | null>(null);
-  const [isMicOn, setIsMicOn] = useState(true);
-  const [isVideoOn, setIsVideoOn] = useState(true);
-  const [errorMsg, setErrorMsg] = useState<string | null>(null);
-  const [seconds, setSeconds] = useState(0);
 
   const [messages, setMessages] = useState([
     { id: 1, sender: "doctor", text: "Halo, selamat pagi. Bagaimana kabar dan perasaan kamu hari ini?", time: "10:01" },
@@ -139,175 +167,36 @@ export default function PatientConsultationPage() {
     }
   };
 
-  // SYSTEM NOTIFIKASI PANGGILAN REAL-TIME PASIEN
+// SYSTEM NOTIFIKASI PANGGILAN REAL-TIME PASIEN
   useEffect(() => {
-    if (activeTab === "waiting") {
-      const activeId = consultationId || Number(localStorage.getItem("active_consultation_id")) || 4029;
-      const roomId = `ROOM-CLM-${activeId}`;
+    const activeId = consultationId || localStorage.getItem("active_consultation_id");
+    if (!activeId) return;
 
-      const unsubscribeIncoming = listenIncomingCalls(activeId, (data) => {
+    // 1. Listen perubahan pada node /consultations/{id}
+    const consultRef = ref(rtdb, `consultations/${activeId}`);
+    const unsubscribeConsult = onValue(consultRef, (snapshot) => {
+      if (snapshot.exists()) {
+        const data = snapshot.val();
+        if (data.status === "calling" || data.status === "in_session" || data.status === "active") {
+          setIsIncomingCall(true);
+        }
+      }
+    });
+
+    // 2. Listen perubahan pada node /calls/{id} (yang baru saja diakses dokter)
+    const callRef = ref(rtdb, `calls/${activeId}`);
+    const unsubscribeCall = onValue(callRef, (snapshot) => {
+      if (snapshot.exists()) {
+        // Jika data call ada / dokter memulai panggilan
         setIsIncomingCall(true);
-      });
-
-      const channel = realtimeChannel(`consultation_${roomId}`);
-      channelRef.current = channel;
-
-      channel
-        .on("broadcast", { event: "doctor-calling" }, (payload) => {
-          setIsIncomingCall(true);
-        })
-        .subscribe();
-
-      const globalChannel = realtimeChannel("global_consultation_calls");
-      globalChannel
-        .on("broadcast", { event: "doctor-calling" }, (payload) => {
-          setIsIncomingCall(true);
-        })
-        .subscribe();
-
-      return () => {
-        unsubscribeIncoming();
-        removeRealtimeChannel(channel);
-        removeRealtimeChannel(globalChannel);
-      };
-    }
-  }, [activeTab, consultationId]);
-
-  // Inisialisasi WebRTC Pasien saat Masuk Tab Live
-  useEffect(() => {
-    if (activeTab === "live") {
-      startWebRTCAndMedia();
-      const timer = setInterval(() => setSeconds((p) => p + 1), 1000);
-      return () => {
-        clearInterval(timer);
-        cleanupWebRTC();
-      };
-    }
-  }, [activeTab]);
-
-  const startWebRTCAndMedia = async () => {
-    try {
-      setErrorMsg(null);
-      const mediaStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-      setStream(mediaStream);
-      if (localVideoRef.current) localVideoRef.current.srcObject = mediaStream;
-
-      const activeId = consultationId || Number(localStorage.getItem("active_consultation_id")) || 4029;
-      const roomId = `ROOM-CLM-${activeId}`;
-      
-      const pc = new RTCPeerConnection({
-        iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
-      });
-      peerConnectionRef.current = pc;
-
-      mediaStream.getTracks().forEach((track) => pc.addTrack(track, mediaStream));
-
-      pc.ontrack = (event) => {
-        if (remoteVideoRef.current && event.streams[0]) {
-          remoteVideoRef.current.srcObject = event.streams[0];
-          remoteVideoRef.current.classList.remove("hidden");
-        }
-      };
-
-      pc.onicecandidate = (event) => {
-        if (event.candidate) {
-          channelRef.current?.send({
-            type: "broadcast",
-            event: "ice-candidate",
-            payload: { candidate: event.candidate, sender: "patient" },
-          });
-        }
-      };
-
-      const channel = realtimeChannel(`consultation_${roomId}`);
-      channelRef.current = channel;
-
-      channel
-        .on("broadcast", { event: "offer" }, async ({ payload }) => {
-          if (!peerConnectionRef.current) return;
-          await pc.setRemoteDescription(new RTCSessionDescription(payload.offer));
-          const answer = await pc.createAnswer();
-          await pc.setLocalDescription(answer);
-
-          channel.send({
-            type: "broadcast",
-            event: "answer",
-            payload: { answer, sender: "patient" },
-          });
-        })
-        .on("broadcast", { event: "ice-candidate" }, async ({ payload }) => {
-          if (payload.sender !== "patient" && payload.candidate && pc.remoteDescription) {
-            try {
-              await pc.addIceCandidate(new RTCIceCandidate(payload.candidate));
-            } catch (e) {
-              console.error("[PASIEN] Error Candidate:", e);
-            }
-          }
-        })
-        .subscribe(async (status) => {
-          if (status === "SUBSCRIBED") {
-            channel.send({
-              type: "broadcast",
-              event: "patient-ready",
-              payload: { roomId },
-            });
-          }
-        });
-
-    } catch (err: any) {
-      console.error("WebRTC Pasien Error:", err);
-      setErrorMsg("Izin kamera atau mikrofon ditolak/tidak tersedia.");
-    }
-  };
-
-  const cleanupWebRTC = () => {
-    if (stream) {
-      stream.getTracks().forEach((track) => track.stop());
-      setStream(null);
-    }
-    if (localVideoRef.current) {
-      localVideoRef.current.srcObject = null;
-    }
-    if (remoteVideoRef.current) {
-      remoteVideoRef.current.srcObject = null;
-      remoteVideoRef.current.classList.add("hidden");
-    }
-    if (peerConnectionRef.current) {
-      peerConnectionRef.current.close();
-      peerConnectionRef.current = null;
-    }
-    if (channelRef.current) {
-      removeRealtimeChannel(channelRef.current);
-      channelRef.current = null;
-    }
-    setIsIncomingCall(false);
-  };
-
-  const toggleVideo = () => {
-    if (stream) {
-      const track = stream.getVideoTracks()[0];
-      if (track) {
-        track.enabled = !track.enabled;
-        setIsVideoOn(track.enabled);
       }
-    }
-  };
+    });
 
-  const toggleMic = () => {
-    if (stream) {
-      const track = stream.getAudioTracks()[0];
-      if (track) {
-        track.enabled = !track.enabled;
-        setIsMicOn(track.enabled);
-      }
-    }
-  };
-
-  const formatTime = (sec: number) => {
-    const m = Math.floor(sec / 60).toString().padStart(2, "0");
-    const s = (sec % 60).toString().padStart(2, "0");
-    return `${m}:${s}`;
-  };
+    return () => {
+      unsubscribeConsult();
+      unsubscribeCall();
+    };
+  }, [consultationId]);
 
   const handleSendMessage = (e: React.FormEvent) => {
     e.preventDefault();
@@ -337,61 +226,73 @@ export default function PatientConsultationPage() {
     setActiveTab("payment");
   };
 
-  // FUNGSI PENGIRIMAN PEMBAYARAN DENGAN PROTEKSI TIMEOUT 3 DETIK
+  // Simpan konsultasi dan pembayaran. Jangan gunakan ID fallback palsu karena
+  // dokter dan pasien wajib memakai ID konsultasi yang sama dari backend.
   const handleSubmitPaymentProof = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    if (!selectedFile && !uploadPreview) {
+    if (!selectedFile || !uploadPreview) {
       alert("Silakan unggah foto / screenshot bukti transfer terlebih dahulu.");
+      return;
+    }
+
+    if (selectedFile.size > 5 * 1024 * 1024) {
+      alert("Ukuran bukti pembayaran maksimal 5 MB.");
       return;
     }
 
     setIsProcessingPayment(true);
 
     try {
-      const savePromise = (async () => {
-        const consultData = await firebaseService.createConsultation({
-          doctor_id: Number(bookedDoctor?.id || 6),
+      if (!bookedDoctor?.id) {
+        throw new Error("Dokter belum dipilih atau ID dokter tidak valid. Kembali ke jadwal dan pilih dokter.");
+      }
+
+      const consultData = await withTimeout(
+        firebaseService.createConsultation({
+          doctor_id: Number(bookedDoctor.id),
           consultation_time: selectedTime,
           consultation_date: selectedDate,
           status: "scheduled",
-          patient_name: "Achmad Daniel"
-        });
+          patient_name: "Achmad Daniel",
+        }),
+        "Pembuatan konsultasi"
+      );
 
-        const consultId = consultData?.id || Date.now();
-        setConsultationId(consultId);
-        localStorage.setItem("active_consultation_id", String(consultId));
+      const consultId = consultData?.id;
+      if (consultId === undefined || consultId === null || String(consultId).trim() === "") {
+        throw new Error("Backend tidak mengembalikan ID konsultasi.");
+      }
 
-        await firebaseService.createPayment({
+      setConsultationId(consultId);
+      localStorage.setItem("active_consultation_id", String(consultId));
+
+      await withTimeout(
+        firebaseService.createPayment({
           consultation_id: consultId,
-          doctor_name: bookedDoctor?.name || "Dr. Danuar Ilham, Sp.KJ",
-          amount: bookedDoctor?.priceNum || 250000,
+          doctor_name: bookedDoctor.name || "Dokter Calma",
+          amount: bookedDoctor.priceNum || 250000,
           payment_method: paymentMethod.toUpperCase(),
-          proof_url: uploadPreview || "https://placeholder.com/proof.jpg",
-          status: "pending_verification"
-        });
-      })();
+          // URL object hanya untuk preview. Integrasi produksi harus mengunggah
+          // file ke storage dan menyimpan URL permanen.
+          proof_url: uploadPreview,
+          status: "pending_verification",
+        }),
+        "Penyimpanan pembayaran"
+      );
 
-      // Race antara proses simpan database dengan timeout 3 detik
-      await Promise.race([
-        savePromise,
-        new Promise((_, reject) => setTimeout(() => reject(new Error("Timeout saving data")), 3000))
-      ]);
-
-    } catch (err: any) {
-      console.warn("Gagal menyimpan ke Firebase (Timeout/Error), menggunakan fallback lokal:", err);
-      const fallbackId = 4029;
-      setConsultationId(fallbackId);
-      localStorage.setItem("active_consultation_id", String(fallbackId));
+      setActiveTab("waiting");
+    } catch (err: unknown) {
+      console.error("Gagal menyimpan konsultasi atau pembayaran:", err);
+      const detail = err instanceof Error ? err.message : String(err);
+      alert(`Pembayaran belum berhasil diproses.\n\nDetail: ${detail}\n\nData tidak dianggap berhasil dan halaman tidak dipindahkan ke ruang tunggu.`);
     } finally {
       setIsProcessingPayment(false);
-      setActiveTab("waiting");
     }
   };
 
   const handleAcceptCall = () => {
     setIsIncomingCall(false);
-    setSeconds(0);
     setActiveTab("live");
   };
 
@@ -799,7 +700,7 @@ export default function PatientConsultationPage() {
             </h2>
             <p className="text-xs text-slate-500 max-w-md mx-auto leading-relaxed">
               Tim admin sedang memverifikasi transaksi Anda. Silakan tetap berada di halaman ini. <br />
-              <span className="font-semibold text-slate-800">{bookedDoctor?.name}</span> (SESI ID: #{consultationId || localStorage.getItem("active_consultation_id") || 4029}) akan segera menghubungi Anda melalui video call.
+              <span className="font-semibold text-slate-800">{bookedDoctor?.name}</span> (SESI ID: #{consultationId || localStorage.getItem("active_consultation_id") || "Belum tersedia"}) akan segera menghubungi Anda melalui video call.
             </p>
           </div>
 
@@ -865,88 +766,51 @@ export default function PatientConsultationPage() {
 
       {/* TAB 4: LIVE SESSION */}
       {activeTab === "live" && (
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-          <div className="lg:col-span-8 space-y-4">
-            {errorMsg && (
-              <div className="p-3 bg-rose-50 border border-rose-200 text-rose-700 rounded-2xl text-xs font-medium">
-                {errorMsg}
-              </div>
-            )}
-            <div className="relative bg-slate-950 rounded-3xl overflow-hidden aspect-video shadow-xl flex items-center justify-center border border-slate-800">
-              <video ref={remoteVideoRef} autoPlay playsInline className="w-full h-full object-cover hidden" />
-              
-              <div className="absolute inset-0 flex flex-col items-center justify-center text-slate-400">
-                <Loader2 className="w-8 h-8 animate-spin text-teal-500 mb-2" />
-                <p className="text-xs">Menunggu video dari <span className="text-white font-semibold">{bookedDoctor?.name}</span>...</p>
-              </div>
-
-              <div className="absolute top-4 left-4 bg-slate-900/80 backdrop-blur-md border border-white/10 px-3.5 py-2 rounded-2xl flex items-center gap-3 z-20 shadow-lg">
-                <div className="w-8 h-8 rounded-xl bg-teal-700 text-white font-bold text-xs flex items-center justify-center">
-                  {bookedDoctor?.avatar}
-                </div>
-                <div>
-                  <p className="text-xs font-bold text-white leading-none">{bookedDoctor?.name}</p>
-                  <p className="text-[10px] text-teal-400 mt-0.5">{bookedDoctor?.title}</p>
-                </div>
-              </div>
-
-              <div className="absolute top-4 right-4 bg-rose-600 text-white text-[10px] font-bold px-3 py-1 rounded-full z-20 flex items-center gap-1.5 shadow">
-                <span className="w-2 h-2 rounded-full bg-white animate-pulse" /> LIVE • {formatTime(seconds)}
-              </div>
-
-              <div className="absolute bottom-20 right-5 w-40 h-28 bg-slate-900 rounded-2xl border-2 border-white/20 overflow-hidden shadow-2xl z-20">
-                <video ref={localVideoRef} autoPlay playsInline muted className="w-full h-full object-cover -scale-x-100" />
-              </div>
-
-              <div className="absolute bottom-4 left-1/2 -translate-x-1/2 flex items-center gap-3 bg-slate-900/80 backdrop-blur-md p-2 rounded-2xl z-30 border border-white/10">
-                <button onClick={toggleMic} className={`p-2.5 rounded-xl text-white transition-colors ${isMicOn ? "bg-white/20 hover:bg-white/30" : "bg-rose-500"}`}>
-                  {isMicOn ? <Mic className="w-4 h-4" /> : <MicOff className="w-4 h-4" />}
-                </button>
-                <button onClick={toggleVideo} className={`p-2.5 rounded-xl text-white transition-colors ${isVideoOn ? "bg-white/20 hover:bg-white/30" : "bg-rose-500"}`}>
-                  {isVideoOn ? <Video className="w-4 h-4" /> : <VideoOff className="w-4 h-4" />}
-                </button>
-                <button 
-                  onClick={() => {
-                    cleanupWebRTC();
-                    setActiveTab("booking");
-                  }} 
-                  className="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 transition-colors"
-                >
-                  <PhoneOff className="w-3.5 h-3.5" /> Akhiri Sesi
-                </button>
-              </div>
+        <div className="space-y-6">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <h2 className="text-xl font-bold text-slate-900">Konsultasi Video Calma</h2>
+              <p className="mt-1 text-sm text-slate-500">
+                Konsultasi bersama{" "}
+                <span className="font-semibold text-teal-700">
+                  {bookedDoctor?.name || "Dokter Calma"}
+                </span>
+              </p>
+            </div>
+            <div className="rounded-xl border border-teal-100 bg-teal-50 px-4 py-2 text-xs font-semibold text-teal-800">
+              ID Sesi: {consultationId ?? "Belum tersedia"}
             </div>
           </div>
 
-          <div className="lg:col-span-4 bg-white rounded-3xl border border-slate-100 p-5 shadow-sm flex flex-col h-[520px]">
-            <div className="flex items-center justify-between pb-3 border-b border-slate-100 mb-3">
-              <div className="flex items-center gap-2 font-bold text-xs text-slate-800">
-                <MessageSquare className="w-4 h-4 text-teal-600" /> Chat dengan {bookedDoctor?.name}
-              </div>
-            </div>
-            <div className="flex-1 overflow-y-auto space-y-3 text-xs bg-slate-50/80 p-3.5 rounded-2xl border border-slate-100">
-              {messages.map((m) => (
-                <div key={m.id} className={`flex flex-col ${m.sender === "patient" ? "items-end" : "items-start"}`}>
-                  <div className={`p-3 rounded-2xl max-w-[85%] ${m.sender === "patient" ? "bg-teal-700 text-white rounded-br-xs" : "bg-white border border-slate-200 shadow-sm text-slate-800 rounded-bl-xs"}`}>
-                    <p className="leading-relaxed">{m.text}</p>
-                    <span className="text-[9px] opacity-70 block text-right mt-1">{m.time}</span>
-                  </div>
-                </div>
-              ))}
-            </div>
-            <form onSubmit={handleSendMessage} className="mt-3 flex gap-2 pt-2 border-t border-slate-100">
-              <input
-                type="text"
-                placeholder={`Kirim pesan ke ${bookedDoctor?.name}...`}
-                value={inputMessage}
-                onChange={(e) => setInputMessage(e.target.value)}
-                className="flex-1 bg-slate-50 text-xs px-4 py-2.5 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-teal-600 transition-all"
-              />
-              <button type="submit" className="bg-teal-700 hover:bg-teal-800 text-white px-4 py-2.5 rounded-xl text-xs font-semibold transition-colors shadow">
-                <Send className="w-3.5 h-3.5" />
+          {consultationId !== null && String(consultationId).trim() !== "" ? (
+            <ConsultationVideoCall
+              consultationId={String(consultationId)}
+              role="patient"
+            />
+          ) : (
+            <div className="rounded-2xl border border-amber-200 bg-amber-50 p-6">
+              <h3 className="font-semibold text-amber-900">ID konsultasi belum tersedia</h3>
+              <p className="mt-2 text-sm text-amber-800">
+                Video call belum dapat dimulai karena ID sesi belum tersimpan.
+                Silakan kembali ke ruang tunggu dan pastikan booking berhasil dibuat.
+              </p>
+              <button
+                type="button"
+                onClick={() => setActiveTab("waiting")}
+                className="mt-4 rounded-xl bg-teal-700 px-4 py-2 text-sm font-semibold text-white hover:bg-teal-800"
+              >
+                Kembali ke Ruang Tunggu
               </button>
-            </form>
-          </div>
+            </div>
+          )}
+
+          <button
+            type="button"
+            onClick={() => setActiveTab("waiting")}
+            className="rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+          >
+            Kembali ke Ruang Tunggu
+          </button>
         </div>
       )}
     </div>

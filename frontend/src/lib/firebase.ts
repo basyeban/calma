@@ -393,40 +393,66 @@ export const firebaseService = {
     };
   },
 
-  async createConsultation(payload: {
-    doctor_id: number;
-    consultation_time: string;
-    consultation_date: string;
-    status: string;
-    patient_name: string;
-  }): Promise<{ id: number }> {
-    const newId = Date.now();
-    const dataWithId = {
-      id: newId,
-      ...payload,
-      created_at: new Date().toISOString(),
-    };
+async createConsultation(payload: {
+  doctor_id: number;
+  consultation_time: string;
+  consultation_date: string;
+  status: string;
+  patient_name: string;
+}): Promise<{ id: number }> {
+  const newId = Date.now();
 
-    await set(ref(rtdb, `consultations/${newId}`), dataWithId);
+  const dataWithId = {
+    id: newId,
+    ...payload,
+    created_at: new Date().toISOString(),
+  };
+
+  try {
+    await withTimeout(
+      set(ref(rtdb, `consultations/${newId}`), dataWithId),
+      10000
+    );
+
     return { id: newId };
-  },
+  } catch (error) {
+    console.error("[Firebase] Gagal menyimpan konsultasi:", error);
+    throw new Error(
+      "Gagal menyimpan konsultasi ke Firebase. Periksa koneksi dan aturan keamanan database."
+    );
+  }
+},
 
-  async createPayment(payload: {
-    consultation_id: number;
-    doctor_name: string;
-    amount: number;
-    payment_method: string;
-    proof_url: string;
-    status: string;
-  }): Promise<{ id: number }> {
-    const paymentId = Date.now();
-    await set(ref(rtdb, `payments/${paymentId}`), {
-      id: paymentId,
-      ...payload,
-      created_at: new Date().toISOString(),
-    });
+async createPayment(payload: {
+  consultation_id: number;
+  doctor_name: string;
+  amount: number;
+  payment_method: string;
+  proof_url: string;
+  status: string;
+}): Promise<{ id: number }> {
+  const paymentId = Date.now();
+
+  const paymentData = {
+    id: paymentId,
+    ...payload,
+    created_at: new Date().toISOString(),
+  };
+
+  try {
+    await withTimeout(
+      set(ref(rtdb, `payments/${paymentId}`), paymentData),
+      10000
+    );
+
     return { id: paymentId };
-  },
+  } catch (error) {
+    console.error("[Firebase] Gagal menyimpan pembayaran:", error);
+    throw new Error(
+      "Gagal menyimpan pembayaran ke Firebase. Periksa koneksi dan aturan keamanan database."
+    );
+  }
+},
 
   async getPayouts(doctorId?: number | string): Promise<any[]> {
     try {

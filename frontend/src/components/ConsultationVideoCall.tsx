@@ -1,3 +1,4 @@
+
 "use client";
 
 import {
@@ -8,6 +9,7 @@ import {
 } from "react";
 
 import {
+  onChildAdded,
   onValue,
   push,
   ref,
@@ -31,9 +33,7 @@ type SignalDescription = {
 
 const rtcConfiguration: RTCConfiguration = {
   iceServers: [
-    {
-      urls: "stun:stun.l.google.com:19302",
-    },
+    { urls: "stun:stun.l.google.com:19302" },
   ],
 };
 
@@ -45,12 +45,12 @@ export default function ConsultationVideoCall({
   const remoteVideoRef = useRef<HTMLVideoElement>(null);
 
   const peerRef = useRef<RTCPeerConnection | null>(null);
-  const localStreamRef = useRef<MediaStream | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
 
   const startedRef = useRef(false);
-  const remoteDescriptionReadyRef = useRef(false);
+  const pendingCandidatesRef =
+    useRef<RTCIceCandidateInit[]>([]);
 
-  const pendingCandidatesRef = useRef<RTCIceCandidateInit[]>([]);
   const unsubscribersRef = useRef<Array<() => void>>([]);
 
   const [status, setStatus] = useState("Belum terhubung");
@@ -61,16 +61,24 @@ export default function ConsultationVideoCall({
 
   const roomId = consultationId.trim();
 
-  const roomRef = useCallback(() => {
-    return ref(realtimeDb, `calls/${roomId}`);
-  }, [roomId]);
+  const cleanup = useCallback(() => {
+    unsubscribersRef.current.forEach((unsubscribe) => {
+      unsubscribe();
+    });
+    unsubscribersRef.current = [];
 
-  const stopMedia = useCallback(() => {
-    localStreamRef.current?.getTracks().forEach((track) => {
+    if (peerRef.current) {
+      peerRef.current.ontrack = null;
+      peerRef.current.onicecandidate = null;
+      peerRef.current.onconnectionstatechange = null;
+      peerRef.current.close();
+      peerRef.current = null;
+    }
+
+    streamRef.current?.getTracks().forEach((track) => {
       track.stop();
     });
-
-    localStreamRef.current = null;
+    streamRef.current = null;
 
     if (localVideoRef.current) {
       localVideoRef.current.srcObject = null;
@@ -79,40 +87,21 @@ export default function ConsultationVideoCall({
     if (remoteVideoRef.current) {
       remoteVideoRef.current.srcObject = null;
     }
-  }, []);
-
-  const cleanup = useCallback(() => {
-    unsubscribersRef.current.forEach((unsubscribe) => {
-      unsubscribe();
-    });
-
-    unsubscribersRef.current = [];
-
-    peerRef.current?.close();
-    peerRef.current = null;
-
-    stopMedia();
 
     pendingCandidatesRef.current = [];
-    remoteDescriptionReadyRef.current = false;
     startedRef.current = false;
-
     setIsStarted(false);
-  }, [stopMedia]);
+  }, []);
 
   const addPendingCandidates = useCallback(async () => {
     const peer = peerRef.current;
 
-    if (!peer?.remoteDescription) {
-      return;
-    }
+    if (!peer?.remoteDescription) return;
 
-    remoteDescriptionReadyRef.current = true;
-
-    const candidates = [...pendingCandidatesRef.current];
+    const pending = [...pendingCandidatesRef.current];
     pendingCandidatesRef.current = [];
 
-    for (const candidate of candidates) {
+    for (const candidate of pending) {
       try {
         await peer.addIceCandidate(
           new RTCIceCandidate(candidate)
@@ -129,22 +118,25 @@ export default function ConsultationVideoCall({
       return;
     }
 
-    if (startedRef.current) {
-      return;
-    }
+    if (startedRef.current) return;
 
     startedRef.current = true;
     setError("");
-    setStatus("Meminta akses kamera dan mikrofon...");
+    setStatus("Menyiapkan kamera dan mikrofon...");
 
     try {
-      const stream =
-        await navigator.mediaDevices.getUserMedia({
-          audio: true,
-          video: true,
-        });
+      // Hanya dokter yang membersihkan ruang lama.
+      // Lakukan sebelum memasang listener atau membuat offer.
+      if (role === "doctor") {
+        await remove(ref(realtimeDb, `calls/${roomId}`));
+      }
 
-      localStreamRef.current = stream;
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: true,
+        video: true,
+      });
+
+      streamRef.current = stream;
 
       if (localVideoRef.current) {
         localVideoRef.current.srcObject = stream;
@@ -158,34 +150,34 @@ export default function ConsultationVideoCall({
       });
 
       peer.ontrack = (event) => {
-        const remoteStream = event.streams[0];
-
-        if (remoteVideoRef.current && remoteStream) {
-          remoteVideoRef.current.srcObject = remoteStream;
+        if (remoteVideoRef.current && event.streams[0]) {
+          remoteVideoRef.current.srcObject = event.streams[0];
         }
-
-        setStatus("Terhubung dengan lawan bicara");
+        setStatus("Menerima media dari lawan bicara");
       };
 
       peer.onconnectionstatechange = () => {
-        const connectionState = peer.connectionState;
-
-        if (connectionState === "connected") {
-          setStatus("Panggilan terhubung");
-        } else if (connectionState === "connecting") {
-          setStatus("Menghubungkan...");
-        } else if (connectionState === "disconnected") {
-          setStatus("Koneksi terputus sementara");
-        } else if (connectionState === "failed") {
-          setStatus(
-            "Koneksi gagal. Jaringan mungkin membutuhkan server TURN."
-          );
-        } else if (connectionState === "closed") {
-          setStatus("Panggilan berakhir");
+        switch (peer.connectionState) {
+          case "connected":
+            setStatus("Panggilan terhubung");
+            break;
+          case "connecting":
+            setStatus("Menghubungkan...");
+            break;
+          case "disconnected":
+            setStatus("Koneksi terputus sementara");
+            break;
+          case "failed":
+            setStatus(
+              "Koneksi gagal. Periksa jaringan atau konfigurasi TURN."
+            );
+            break;
+          case "closed":
+            setStatus("Panggilan berakhir");
+            break;
         }
       };
 
-      const callRef = roomRef();
       const ownCandidatesRef = ref(
         realtimeDb,
         `calls/${roomId}/candidates/${role}`
@@ -199,61 +191,63 @@ export default function ConsultationVideoCall({
         `calls/${roomId}/candidates/${otherRole}`
       );
 
-      peer.onicecandidate = async (event) => {
+      peer.onicecandidate = (event) => {
         if (event.candidate) {
-          await push(ownCandidatesRef, event.candidate.toJSON());
+          void push(
+            ownCandidatesRef,
+            event.candidate.toJSON()
+          ).catch((err) => {
+            console.error("Gagal mengirim ICE candidate:", err);
+          });
         }
       };
 
-      const candidateUnsubscribe = onValue(
+      // onChildAdded menangani kandidat satu per satu,
+      // bukan memproses seluruh daftar berulang kali.
+      const candidateUnsubscribe = onChildAdded(
         otherCandidatesRef,
         async (snapshot) => {
-          const candidates = snapshot.val();
+          const candidate =
+            snapshot.val() as RTCIceCandidateInit | null;
 
-          if (!candidates) {
-            return;
-          }
+          const currentPeer = peerRef.current;
+          if (!candidate || !currentPeer) return;
 
-          for (const candidate of Object.values(
-            candidates
-          ) as RTCIceCandidateInit[]) {
-            const peerConnection = peerRef.current;
-
-            if (!peerConnection) {
-              return;
-            }
-
-            try {
-              if (
-                remoteDescriptionReadyRef.current &&
-                peerConnection.remoteDescription
-              ) {
-                await peerConnection.addIceCandidate(
-                  new RTCIceCandidate(candidate)
-                );
-              } else {
-                pendingCandidatesRef.current.push(candidate);
-              }
-            } catch (err) {
-              console.error(
-                "Gagal memproses ICE candidate:",
-                err
+          try {
+            if (currentPeer.remoteDescription) {
+              await currentPeer.addIceCandidate(
+                new RTCIceCandidate(candidate)
               );
+            } else {
+              pendingCandidatesRef.current.push(candidate);
             }
+          } catch (err) {
+            console.error("Gagal memproses ICE candidate:", err);
           }
         }
       );
 
       unsubscribersRef.current.push(candidateUnsubscribe);
 
+      // Mendengarkan panggilan berakhir dari pihak lain.
+      const statusUnsubscribe = onValue(
+        ref(realtimeDb, `calls/${roomId}/status`),
+        (snapshot) => {
+          if (
+            snapshot.val() === "ended" &&
+            startedRef.current
+          ) {
+            cleanup();
+            setStatus("Panggilan diakhiri oleh pihak lain");
+          }
+        }
+      );
+
+      unsubscribersRef.current.push(statusUnsubscribe);
+
       if (role === "doctor") {
-        setStatus("Membuat ruang panggilan...");
+        setStatus("Memanggil pasien...");
 
-        // Bersihkan sinyal lama untuk ruang ini.
-        await remove(ref(realtimeDb, `calls/${roomId}`));
-
-        // Hapus listener kandidat lama dan pasang kembali.
-        // Peer tetap digunakan untuk koneksi yang baru.
         const offer = await peer.createOffer();
         await peer.setLocalDescription(offer);
 
@@ -268,31 +262,33 @@ export default function ConsultationVideoCall({
             const answer =
               snapshot.val() as SignalDescription | null;
 
+            const currentPeer = peerRef.current;
+
             if (
               !answer ||
-              !peerRef.current ||
-              peerRef.current.remoteDescription
+              !currentPeer ||
+              currentPeer.remoteDescription
             ) {
               return;
             }
 
             try {
-              await peerRef.current.setRemoteDescription(
+              await currentPeer.setRemoteDescription(
                 new RTCSessionDescription(answer)
               );
 
               await addPendingCandidates();
-              setStatus("Jawaban diterima, menghubungkan...");
+              setStatus("Jawaban pasien diterima");
             } catch (err) {
-              console.error("Gagal menerima jawaban:", err);
-              setError("Gagal memproses jawaban panggilan.");
+              console.error("Gagal memproses jawaban:", err);
+              setError("Gagal memproses jawaban dari pasien.");
             }
           }
         );
 
         unsubscribersRef.current.push(answerUnsubscribe);
       } else {
-        setStatus("Menunggu dokter memulai panggilan...");
+        setStatus("Menunggu offer dari dokter...");
 
         const offerUnsubscribe = onValue(
           ref(realtimeDb, `calls/${roomId}/offer`),
@@ -300,23 +296,25 @@ export default function ConsultationVideoCall({
             const offer =
               snapshot.val() as SignalDescription | null;
 
+            const currentPeer = peerRef.current;
+
             if (
               !offer ||
-              !peerRef.current ||
-              peerRef.current.remoteDescription
+              !currentPeer ||
+              currentPeer.remoteDescription
             ) {
               return;
             }
 
             try {
-              await peerRef.current.setRemoteDescription(
+              await currentPeer.setRemoteDescription(
                 new RTCSessionDescription(offer)
               );
 
               await addPendingCandidates();
 
-              const answer = await peerRef.current.createAnswer();
-              await peerRef.current.setLocalDescription(answer);
+              const answer = await currentPeer.createAnswer();
+              await currentPeer.setLocalDescription(answer);
 
               await set(
                 ref(realtimeDb, `calls/${roomId}/answer`),
@@ -326,10 +324,10 @@ export default function ConsultationVideoCall({
                 } satisfies SignalDescription
               );
 
-              setStatus("Mengirim jawaban panggilan...");
+              setStatus("Mengirim jawaban ke dokter...");
             } catch (err) {
-              console.error("Gagal menjawab panggilan:", err);
-              setError("Gagal menerima panggilan dari dokter.");
+              console.error("Gagal menjawab offer:", err);
+              setError("Gagal menjawab panggilan dokter.");
             }
           }
         );
@@ -339,32 +337,22 @@ export default function ConsultationVideoCall({
 
       setIsStarted(true);
     } catch (err) {
-      console.error("Gagal memulai video call:", err);
-
-      const message =
-        err instanceof Error ? err.message : "Kesalahan tidak diketahui";
+      console.error("Gagal memulai konsultasi:", err);
 
       setError(
-        `Tidak dapat memulai video call: ${message}. Pastikan izin kamera dan mikrofon diberikan.`
+        err instanceof Error
+          ? err.message
+          : "Gagal mengakses kamera atau mikrofon."
       );
 
       cleanup();
       setStatus("Gagal memulai panggilan");
     }
-  }, [
-    roomId,
-    role,
-    roomRef,
-    addPendingCandidates,
-    cleanup,
-  ]);
+  }, [roomId, role, cleanup, addPendingCandidates]);
 
   const endCall = useCallback(async () => {
     try {
-      await set(
-        ref(realtimeDb, `calls/${roomId}/status`),
-        "ended"
-      );
+      await set(ref(realtimeDb, `calls/${roomId}/status`), "ended");
     } catch (err) {
       console.error("Gagal memperbarui status panggilan:", err);
     }
@@ -374,48 +362,22 @@ export default function ConsultationVideoCall({
   }, [roomId, cleanup]);
 
   useEffect(() => {
-    if (!roomId) {
-      return;
-    }
-
-    const statusUnsubscribe = onValue(
-      ref(realtimeDb, `calls/${roomId}/status`),
-      (snapshot) => {
-        if (
-          snapshot.val() === "ended" &&
-          startedRef.current
-        ) {
-          cleanup();
-          setStatus("Panggilan diakhiri oleh salah satu pihak");
-        }
-      }
-    );
-
     return () => {
-      statusUnsubscribe();
       cleanup();
     };
-  }, [roomId, cleanup]);
+  }, [cleanup]);
 
   const toggleCamera = () => {
-    const track = localStreamRef.current
-      ?.getVideoTracks()[0];
-
-    if (!track) {
-      return;
-    }
+    const track = streamRef.current?.getVideoTracks()[0];
+    if (!track) return;
 
     track.enabled = !track.enabled;
     setCameraEnabled(track.enabled);
   };
 
   const toggleMicrophone = () => {
-    const track = localStreamRef.current
-      ?.getAudioTracks()[0];
-
-    if (!track) {
-      return;
-    }
+    const track = streamRef.current?.getAudioTracks()[0];
+    if (!track) return;
 
     track.enabled = !track.enabled;
     setMicEnabled(track.enabled);
@@ -428,7 +390,6 @@ export default function ConsultationVideoCall({
           <h2 className="text-xl font-bold text-slate-800">
             Konsultasi Video Calma
           </h2>
-
           <p className="mt-1 text-sm text-slate-500">
             ID konsultasi: {roomId}
           </p>
@@ -457,9 +418,8 @@ export default function ConsultationVideoCall({
             playsInline
             className="aspect-video w-full object-cover"
           />
-
           <p className="px-3 py-2 text-sm text-white">
-            Kamera saya ({role === "doctor" ? "Dokter" : "Pasien"})
+            Anda ({role === "doctor" ? "Dokter" : "Pasien"})
           </p>
         </div>
 
@@ -470,7 +430,6 @@ export default function ConsultationVideoCall({
             playsInline
             className="aspect-video w-full object-cover"
           />
-
           <p className="px-3 py-2 text-sm text-white">
             Lawan bicara
           </p>
@@ -484,9 +443,7 @@ export default function ConsultationVideoCall({
             onClick={startCall}
             className="rounded-lg bg-teal-600 px-5 py-3 font-semibold text-white hover:bg-teal-700"
           >
-            {role === "doctor"
-              ? "Mulai Panggilan"
-              : "Gabung Panggilan"}
+            {role === "doctor" ? "Mulai Panggilan" : "Gabung Panggilan"}
           </button>
         ) : (
           <>
@@ -495,9 +452,7 @@ export default function ConsultationVideoCall({
               onClick={toggleCamera}
               className="rounded-lg border border-slate-300 px-4 py-3 text-sm font-semibold text-slate-700"
             >
-              {cameraEnabled
-                ? "Matikan Kamera"
-                : "Aktifkan Kamera"}
+              {cameraEnabled ? "Matikan Kamera" : "Aktifkan Kamera"}
             </button>
 
             <button
@@ -505,9 +460,7 @@ export default function ConsultationVideoCall({
               onClick={toggleMicrophone}
               className="rounded-lg border border-slate-300 px-4 py-3 text-sm font-semibold text-slate-700"
             >
-              {micEnabled
-                ? "Matikan Mikrofon"
-                : "Aktifkan Mikrofon"}
+              {micEnabled ? "Matikan Mikrofon" : "Aktifkan Mikrofon"}
             </button>
 
             <button

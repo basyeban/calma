@@ -4,6 +4,17 @@ import { useState, useEffect, useRef, use } from "react";
 import { useRouter } from "next/navigation";
 import { Video, VideoOff, Mic, MicOff, PhoneOff, Loader2, FileText, CheckCircle2 } from "lucide-react";
 import { realtimeChannel, removeRealtimeChannel, firebaseService } from "@/lib/firebase";
+// Contoh ketika Dokter klik Panggil / Masuk Sesi
+import { ref, update } from "firebase/database";
+import { rtdb } from "@/lib/firebase";
+
+const startCall = async (consultationId: string) => {
+  const consultRef = ref(rtdb, `consultations/${consultationId}`);
+  await update(consultRef, {
+    status: "in_session", // Sinyal bahwa sesi aktif
+    startedAt: Date.now()
+  });
+};
 
 export default function DoctorLiveSessionPage({ params }: { params: Promise<{ id: string }> | { id: string } }) {
   const router = useRouter();
