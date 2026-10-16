@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { ChevronLeft, ChevronRight, Clock, CheckCircle2, Loader2, Plus, Trash2, DollarSign } from "lucide-react";
-import { firebaseService, realtimeDb } from "@/lib/firebase";
+import { supabase } from "@/lib/supabase";
 
 export default function DoctorSchedulePage() {
   const today = new Date();
@@ -24,7 +24,7 @@ export default function DoctorSchedulePage() {
 
   const activeDays = [1, 2, 5, 6, 7, 8, 9, 12, 13, 14, 15, 16, 19, 20, 21, 22, 23, 26, 27, 28, 29, 30];
 
-  // Ambil data jadwal & tarif dari Firebase Realtime Database
+  // Ambil data jadwal dari Supabase (booking) & localStorage (ketersediaan & tarif)
   useEffect(() => {
     async function fetchScheduleAndFee() {
       try {
@@ -32,8 +32,8 @@ export default function DoctorSchedulePage() {
         const doctorId = localStorage.getItem("doctor_id") || "6"; 
         const formattedDate = `2026-10-${selectedDate < 10 ? "0" + selectedDate : selectedDate}`;
 
-        // 1. Ambil data konsultasi yang sudah dibooking pasien pada tanggal tersebut
-        const { data: consultationsData, error: consultationError } = await realtimeDb
+        // 1. Ambil data konsultasi yang sudah dibooking pasien pada tanggal tersebut dari Supabase
+        const { data: consultationsData, error: consultationError } = await supabase
           .from("consultations")
           .select("*")
           .eq("doctor_id", doctorId)
@@ -44,26 +44,29 @@ export default function DoctorSchedulePage() {
           bookedSlots = consultationsData.map((item: any, idx: number) => ({
             id: item.id || idx,
             time: item.time_slot || item.consultation_time || "10:00",
-            patient: item.patient_name || item.patient_profiles?.users?.full_name || "Pasien Terdaftar",
+            patient: item.patient_name || "Pasien Terdaftar",
             type: "Konsultasi Video",
             status: "TERISI",
           }));
         }
 
-        // 2. Ambil data ketersediaan umum & tarif dokter dari Firebase Realtime Database
-        const scheduleData = await firebaseService.getDoctorSchedule(doctorId, formattedDate);
+        // 2. Ambil data ketersediaan & tarif dari localStorage browser agar aman
+        const savedStorageKey = `doctor_schedule_${doctorId}_${formattedDate}`;
+        const localSavedData = localStorage.getItem(savedStorageKey);
 
         let availableSlots: any[] = [];
-        if (scheduleData) {
-          if (scheduleData.consultation_fee) {
-            setConsultationFee(scheduleData.consultation_fee.toString());
+        if (localSavedData) {
+          const parsed = JSON.parse(localSavedData);
+          if (parsed.consultation_fee) {
+            setConsultationFee(parsed.consultation_fee.toString());
           }
-          if (scheduleData.available_slots) {
-            availableSlots = scheduleData.available_slots.filter(
+          if (parsed.available_slots) {
+            availableSlots = parsed.available_slots.filter(
               (slot: any) => slot.status === "TERSEDIA"
             );
           }
         } else {
+          // Fallback slot default jika belum pernah disimpan
           availableSlots = [
             { id: 101, time: "09:00", patient: "Belum ada pasien", type: "", status: "TERSEDIA" },
             { id: 102, time: "13:00", patient: "Belum ada pasien", type: "", status: "TERSEDIA" },
@@ -76,7 +79,7 @@ export default function DoctorSchedulePage() {
 
         setScheduleSlots([...bookedSlots, ...filteredAvailable]);
       } catch (err) {
-        console.error("Gagal memuat jadwal dari Firebase Realtime Database:", err);
+        console.error("Gagal memuat jadwal:", err);
       } finally {
         setLoading(false);
       }
@@ -108,7 +111,7 @@ export default function DoctorSchedulePage() {
     setScheduleSlots(scheduleSlots.filter((slot) => slot.id !== id));
   };
 
-  // Fungsi untuk menyimpan perubahan ketersediaan & tarif ke Firebase Realtime Database
+  // Fungsi untuk menyimpan perubahan ketersediaan & tarif ke localStorage
   const handleSaveAvailability = async () => {
     try {
       setSaving(true);
@@ -116,18 +119,24 @@ export default function DoctorSchedulePage() {
       const formattedDate = `2026-10-${selectedDate < 10 ? "0" + selectedDate : selectedDate}`;
 
       const slotsToSave = scheduleSlots.filter((slot) => slot.status === "TERSEDIA");
+      const feeNumber = parseFloat(consultationFee) || 0;
 
-      await firebaseService.saveDoctorSchedule(
-        doctorId,
-        formattedDate,
-        slotsToSave,
-        parseFloat(consultationFee) || 0
-      );
+      // Simpan ke localStorage
+      const savedStorageKey = `doctor_schedule_${doctorId}_${formattedDate}`;
+      const payload = {
+        doctor_id: doctorId,
+        schedule_date: formattedDate,
+        available_slots: slotsToSave,
+        consultation_fee: feeNumber,
+        updated_at: new Date().toISOString(),
+      };
+
+      localStorage.setItem(savedStorageKey, JSON.stringify(payload));
 
       setSuccessMsg(true);
       setTimeout(() => setSuccessMsg(false), 2500);
     } catch (err) {
-      console.error("Gagal menyimpan ketersediaan ke Firebase Realtime:", err);
+      console.error("Gagal menyimpan ketersediaan:", err);
     } finally {
       setSaving(false);
     }
@@ -309,7 +318,7 @@ export default function DoctorSchedulePage() {
             ) : successMsg ? (
               <>
                 <CheckCircle2 className="w-4 h-4 text-emerald-300" />
-                <span>Berhasil Disimpan ke Database!</span>
+                <span>Berhasil Disimpan!</span>
               </>
             ) : (
               <span>Simpan Perubahan Jadwal & Tarif</span>

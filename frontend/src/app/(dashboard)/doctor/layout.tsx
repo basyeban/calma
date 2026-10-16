@@ -18,7 +18,7 @@ export default function DoctorLayout({ children }: { children: React.ReactNode }
     { name: "Dashboard", href: "/doctor/dashboard", icon: LayoutDashboard },
     { name: "Pasien Saya", href: "/doctor/patients", icon: Users },
     { name: "Jadwal", href: "/doctor/schedule", icon: Calendar },
-    { name: "Konsultasi pasien", href: "/doctor/consultation", icon: Video },
+    { name: "Konsultasi pasien", href: "/doctor/queue", icon: Video },
     { name: "Laporan", href: "/doctor/reports", icon: BarChart3 },
     { name: "Pengaturan", href: "/doctor/settings", icon: Settings },
   ];

@@ -14,12 +14,8 @@ import {
   Camera,
   Trash2,
   Loader2,
-  Mail,
-  Smartphone,
-  Share2,
   FileText,
   Calendar,
-  Pill,
 } from "lucide-react";
 
 function PatientSettingsContent() {
@@ -48,7 +44,7 @@ function PatientSettingsContent() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isLoadingProfile, setIsLoadingProfile] = useState(true);
 
-  // State Profil
+  // State Profil Penuh
   const [profileData, setProfileData] = useState({
     fullName: "",
     email: "",
@@ -80,25 +76,71 @@ function PatientSettingsContent() {
     profileVisibility: "doctors_only",
   });
 
+  // Ambil data profil langsung dari database backend dengan parsing tanggal yang akurat
   useEffect(() => {
     async function fetchUserSettings() {
       try {
         setIsLoadingProfile(true);
-        const fetchedUser = {
-          fullName: "Achmad Daniel",
-          email: "achmaddaniel@gmail.com",
+        const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
+        const token = localStorage.getItem("patient_token") || localStorage.getItem("token");
+
+        const defaultName = localStorage.getItem("patient_name") || "ilham";
+        const defaultEmail = localStorage.getItem("patient_email") || "ilham@gmail.com";
+        const defaultBirth = localStorage.getItem("patient_birth_date") || "2007-01-16";
+        const defaultGender = localStorage.getItem("patient_gender") || "Laki-laki";
+
+        if (!token) {
+          setProfileData({
+            fullName: defaultName,
+            email: defaultEmail,
+            birthDate: defaultBirth,
+            gender: defaultGender,
+          });
+          setIsLoadingProfile(false);
+          return;
+        }
+
+        const response = await fetch(`${apiUrl}/api/patient/profile`, {
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json",
+          },
+        });
+
+        if (response.ok) {
+          const result = await response.json();
+          const u = result.data || result.user || result;
+
+          // Ekstraksi tanggal lahir secara presisi ke format YYYY-MM-DD
+          const rawDate = u.birth_date || u.birthDate || u.tanggal_lahir || u.date_of_birth || defaultBirth;
+          const formattedDate = rawDate ? String(rawDate).split("T")[0] : defaultBirth;
+
+          setProfileData({
+            fullName: u.full_name || u.fullName || u.name || defaultName,
+            email: u.email || defaultEmail,
+            birthDate: formattedDate,
+            gender: u.gender || u.jenis_kelamin || defaultGender,
+          });
+
+          if (u.profile_image || u.profileImage || u.avatar) {
+            setProfileImage(u.profile_image || u.profileImage || u.avatar);
+          }
+        } else {
+          setProfileData({
+            fullName: defaultName,
+            email: defaultEmail,
+            birthDate: defaultBirth,
+            gender: defaultGender,
+          });
+        }
+      } catch (error) {
+        console.error("Gagal memuat pengaturan:", error);
+        setProfileData({
+          fullName: "ilham",
+          email: "ilham@gmail.com",
           birthDate: "2007-01-16",
           gender: "Laki-laki",
-        };
-
-        setProfileData({
-          fullName: fetchedUser.fullName,
-          email: fetchedUser.email,
-          birthDate: fetchedUser.birthDate,
-          gender: fetchedUser.gender,
         });
-      } catch (error) {
-        console.error("Gagal mengambil data:", error);
       } finally {
         setIsLoadingProfile(false);
       }
@@ -132,9 +174,30 @@ function PatientSettingsContent() {
     setIsSubmitting(true);
 
     try {
-      await new Promise((resolve) => setTimeout(resolve, 800));
+      const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
+      const token = localStorage.getItem("patient_token") || localStorage.getItem("token");
+
+      if (token) {
+        await fetch(`${apiUrl}/api/patient/profile`, {
+          method: "PUT",
+          headers: {
+            Authorization: `Bearer ${token}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            full_name: profileData.fullName,
+            birth_date: profileData.birthDate,
+            gender: profileData.gender,
+            ...(newPassword ? { new_password: newPassword, current_password: currentPassword } : {}),
+          }),
+        });
+      }
 
       localStorage.setItem("full_name", profileData.fullName);
+      localStorage.setItem("patient_name", profileData.fullName);
+      localStorage.setItem("patient_email", profileData.email);
+      localStorage.setItem("patient_birth_date", profileData.birthDate);
+      localStorage.setItem("patient_gender", profileData.gender);
       window.dispatchEvent(new Event("profileUpdated"));
 
       setIsSaved(true);
@@ -145,7 +208,7 @@ function PatientSettingsContent() {
 
       setTimeout(() => setIsSaved(false), 3000);
     } catch (error) {
-      console.error("Error saving settings:", error);
+      console.error("Gagal menyimpan pengaturan:", error);
     } finally {
       setIsSubmitting(false);
     }
@@ -203,7 +266,7 @@ function PatientSettingsContent() {
           <section className="bg-white p-4 sm:p-6 rounded-2xl border border-slate-100 shadow-sm space-y-5">
             <div className="flex items-center gap-2 pb-3 border-b border-slate-100 text-teal-700 font-bold text-sm">
               <User className="w-4 h-4" />
-              <h2>Informasi Profil (Tabel: users)</h2>
+              <h2>Informasi Profil Akun Aktif</h2>
             </div>
 
             {isLoadingProfile ? (
@@ -227,7 +290,7 @@ function PatientSettingsContent() {
                                 .join("")
                                 .substring(0, 2)
                                 .toUpperCase()
-                            : "AD"}
+                            : "IL"}
                         </span>
                       )}
                     </div>
@@ -274,42 +337,42 @@ function PatientSettingsContent() {
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div className="space-y-1.5">
-                    <label className="text-xs font-semibold text-slate-600">Nama Lengkap (full_name)</label>
+                    <label className="text-xs font-semibold text-slate-600">Nama Lengkap</label>
                     <input
                       type="text"
                       value={profileData.fullName}
                       onChange={(e) => setProfileData({ ...profileData, fullName: e.target.value })}
-                      className="w-full px-3.5 py-2 border border-slate-200 rounded-xl text-xs focus:ring-2 focus:ring-teal-600 outline-none text-slate-700"
+                      className="w-full px-3.5 py-2 border border-slate-200 rounded-xl text-xs focus:ring-2 focus:ring-teal-600 outline-none text-slate-700 font-medium"
                       required
                     />
                   </div>
 
                   <div className="space-y-1.5">
-                    <label className="text-xs font-semibold text-slate-600">Email (email)</label>
+                    <label className="text-xs font-semibold text-slate-600">Email (Akun Login)</label>
                     <input
                       type="email"
                       value={profileData.email}
                       disabled
-                      className="w-full px-3.5 py-2 border border-slate-200 rounded-xl text-xs bg-slate-100 text-slate-500 cursor-not-allowed outline-none"
+                      className="w-full px-3.5 py-2 border border-slate-200 rounded-xl text-xs bg-slate-100 text-slate-500 cursor-not-allowed outline-none font-medium"
                     />
                   </div>
 
                   <div className="space-y-1.5">
-                    <label className="text-xs font-semibold text-slate-600">Tanggal Lahir (birth_date)</label>
+                    <label className="text-xs font-semibold text-slate-600">Tanggal Lahir</label>
                     <input
                       type="date"
                       value={profileData.birthDate}
                       onChange={(e) => setProfileData({ ...profileData, birthDate: e.target.value })}
-                      className="w-full px-3.5 py-2 border border-slate-200 rounded-xl text-xs focus:ring-2 focus:ring-teal-600 outline-none text-slate-700"
+                      className="w-full px-3.5 py-2 border border-slate-200 rounded-xl text-xs focus:ring-2 focus:ring-teal-600 outline-none text-slate-700 font-medium bg-white"
                     />
                   </div>
 
                   <div className="space-y-1.5">
-                    <label className="text-xs font-semibold text-slate-600">Jenis Kelamin (gender)</label>
+                    <label className="text-xs font-semibold text-slate-600">Jenis Kelamin</label>
                     <select
                       value={profileData.gender}
                       onChange={(e) => setProfileData({ ...profileData, gender: e.target.value })}
-                      className="w-full px-3.5 py-2 border border-slate-200 rounded-xl text-xs focus:ring-2 focus:ring-teal-600 outline-none text-slate-700 bg-white"
+                      className="w-full px-3.5 py-2 border border-slate-200 rounded-xl text-xs focus:ring-2 focus:ring-teal-600 outline-none text-slate-700 font-medium bg-white"
                     >
                       <option value="">Pilih Jenis Kelamin</option>
                       <option value="Laki-laki">Laki-laki</option>
@@ -322,11 +385,12 @@ function PatientSettingsContent() {
           </section>
         )}
 
+        {/* Tab Keamanan */}
         {activeTab === "security" && (
           <section className="bg-white p-4 sm:p-6 rounded-2xl border border-slate-100 shadow-sm space-y-5">
             <div className="flex items-center gap-2 pb-3 border-b border-slate-100 text-teal-700 font-bold text-sm">
               <Shield className="w-4 h-4" />
-              <h2>Keamanan & Kata Sandi (hashed_password)</h2>
+              <h2>Keamanan & Kata Sandi</h2>
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div className="space-y-1.5">
@@ -372,20 +436,20 @@ function PatientSettingsContent() {
           </section>
         )}
 
+        {/* Tab Notifikasi */}
         {activeTab === "notifications" && (
           <section className="bg-white p-4 sm:p-6 rounded-2xl border border-slate-100 shadow-sm space-y-5">
             <div className="flex items-center gap-2 pb-3 border-b border-slate-100 text-teal-700 font-bold text-sm">
               <Bell className="w-4 h-4" />
               <h2>Pengaturan Notifikasi & Pengingat Terapi</h2>
             </div>
-
             <div className="space-y-4">
               <div className="flex items-center justify-between p-3.5 bg-slate-50 rounded-xl border border-slate-100">
                 <div className="space-y-0.5">
                   <label className="text-xs font-bold text-slate-800 flex items-center gap-2">
                     <Calendar className="w-4 h-4 text-teal-600" /> Pengingat Jadwal Konsultasi
                   </label>
-                  <p className="text-[11px] text-slate-500">Terima notifikasi 30 menit sebelum sesi video call atau chat dimulai.</p>
+                  <p className="text-[11px] text-slate-500">Terima notifikasi 30 menit sebelum sesi video call dimulai.</p>
                 </div>
                 <input
                   type="checkbox"
@@ -394,69 +458,24 @@ function PatientSettingsContent() {
                   className="w-4 h-4 accent-teal-700 rounded cursor-pointer"
                 />
               </div>
-
-              <div className="flex items-center justify-between p-3.5 bg-slate-50 rounded-xl border border-slate-100">
-                <div className="space-y-0.5">
-                  <label className="text-xs font-bold text-slate-800 flex items-center gap-2">
-                    <Pill className="w-4 h-4 text-teal-600" /> Pengingat Minum Obat (E-Prescription)
-                  </label>
-                  <p className="text-[11px] text-slate-500">Pemberitahuan harian sesuai jadwal resep obat dari psikiater.</p>
-                </div>
-                <input
-                  type="checkbox"
-                  checked={notifications.medicationReminders}
-                  onChange={(e) => setNotifications({ ...notifications, medicationReminders: e.target.checked })}
-                  className="w-4 h-4 accent-teal-700 rounded cursor-pointer"
-                />
-              </div>
-
-              <div className="flex items-center justify-between p-3.5 bg-slate-50 rounded-xl border border-slate-100">
-                <div className="space-y-0.5">
-                  <label className="text-xs font-bold text-slate-800 flex items-center gap-2">
-                    <Mail className="w-4 h-4 text-teal-600" /> Laporan Perkembangan Mingguan (Email)
-                  </label>
-                  <p className="text-[11px] text-slate-500">Kirim ringkasan skor tes skrining dan progres emosional secara berkala.</p>
-                </div>
-                <input
-                  type="checkbox"
-                  checked={notifications.emailReports}
-                  onChange={(e) => setNotifications({ ...notifications, emailReports: e.target.checked })}
-                  className="w-4 h-4 accent-teal-700 rounded cursor-pointer"
-                />
-              </div>
-
-              <div className="flex items-center justify-between p-3.5 bg-slate-50 rounded-xl border border-slate-100">
-                <div className="space-y-0.5">
-                  <label className="text-xs font-bold text-slate-800 flex items-center gap-2">
-                    <Smartphone className="w-4 h-4 text-teal-600" /> Notifikasi SMS Darurat
-                  </label>
-                  <p className="text-[11px] text-slate-500">Pemberitahuan penting seputar perubahan jadwal atau status darurat klinik.</p>
-                </div>
-                <input
-                  type="checkbox"
-                  checked={notifications.smsAlerts}
-                  onChange={(e) => setNotifications({ ...notifications, smsAlerts: e.target.checked })}
-                  className="w-4 h-4 accent-teal-700 rounded cursor-pointer"
-                />
-              </div>
             </div>
           </section>
         )}
 
+        {/* Tab Privasi */}
         {activeTab === "privacy" && (
           <section className="bg-white p-4 sm:p-6 rounded-2xl border border-slate-100 shadow-sm space-y-5">
             <div className="flex items-center gap-2 pb-3 border-b border-slate-100 text-teal-700 font-bold text-sm">
               <Lock className="w-4 h-4" />
-              <h2>Privasi Data & Rekam Medis (Medical Record Privacy)</h2>
+              <h2>Privasi Data & Rekam Medis</h2>
             </div>
-
             <div className="space-y-4">
               <div className="flex items-center justify-between p-3.5 bg-slate-50 rounded-xl border border-slate-100">
                 <div className="space-y-0.5">
                   <label className="text-xs font-bold text-slate-800 flex items-center gap-2">
                     <FileText className="w-4 h-4 text-teal-600" /> Akses Rekam Medis oleh Dokter Terverifikasi
                   </label>
-                  <p className="text-[11px] text-slate-500">Mengizinkan psikiater yang Anda pilih untuk melihat riwayat diagnosis dan resep sebelumnya.</p>
+                  <p className="text-[11px] text-slate-500">Mengizinkan psikiater yang Anda pilih untuk melihat riwayat.</p>
                 </div>
                 <input
                   type="checkbox"
@@ -464,33 +483,6 @@ function PatientSettingsContent() {
                   onChange={(e) => setPrivacy({ ...privacy, shareHistoryWithDoctors: e.target.checked })}
                   className="w-4 h-4 accent-teal-700 rounded cursor-pointer"
                 />
-              </div>
-
-              <div className="flex items-center justify-between p-3.5 bg-slate-50 rounded-xl border border-slate-100">
-                <div className="space-y-0.5">
-                  <label className="text-xs font-bold text-slate-800 flex items-center gap-2">
-                    <Share2 className="w-4 h-4 text-teal-600" /> Kontribusi Data Anonim untuk Riset AI
-                  </label>
-                  <p className="text-[11px] text-slate-500">Membantu meningkatkan akurasi rekomendasi kesehatan mental Calma secara anonim.</p>
-                </div>
-                <input
-                  type="checkbox"
-                  checked={privacy.shareScreeningAnalytics}
-                  onChange={(e) => setPrivacy({ ...privacy, shareScreeningAnalytics: e.target.checked })}
-                  className="w-4 h-4 accent-teal-700 rounded cursor-pointer"
-                />
-              </div>
-
-              <div className="space-y-2 pt-2">
-                <label className="text-xs font-semibold text-slate-600 block">Visibilitas Profil Akun</label>
-                <select
-                  value={privacy.profileVisibility}
-                  onChange={(e) => setPrivacy({ ...privacy, profileVisibility: e.target.value })}
-                  className="w-full px-3.5 py-2.5 border border-slate-200 rounded-xl text-xs focus:ring-2 focus:ring-teal-600 outline-none text-slate-700 bg-white"
-                >
-                  <option value="doctors_only">Hanya Dokter & Konselor Terkait (Rekomendasi Medis)</option>
-                  <option value="private">Privat Penuh (Hanya Anda Sendiri)</option>
-                </select>
               </div>
             </div>
           </section>

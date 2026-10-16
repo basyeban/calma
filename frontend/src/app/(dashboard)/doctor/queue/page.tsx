@@ -11,7 +11,7 @@ export default function DoctorQueuePage() {
   const [patientsQueue, setPatientsQueue] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
+useEffect(() => {
     async function fetchQueue() {
       try {
         setLoading(true);
@@ -22,18 +22,13 @@ export default function DoctorQueuePage() {
             id: isNaN(Number(k)) ? k : Number(k),
             ...val[k],
           }));
+          
+          // Filter hanya yang belum selesai
           setPatientsQueue(list.filter((item) => item.status !== "completed"));
         } else {
-          setPatientsQueue([
-            {
-              id: 4029,
-              patient_name: "Achmad Daniel",
-              consultation_date: "2026-10-15",
-              consultation_time: "14:00",
-              status: "scheduled",
-              chief_complaint: "Mengeluhkan dada berdebar dan cemas berlebih saat malam hari."
-            }
-          ]);
+          // Kosongkan antrean jika database benar-benar belum ada data
+          // agar tidak memaksa menampilkan nama "Achmad Daniel"
+          setPatientsQueue([]);
         }
       } catch (err) {
         console.error("Gagal mengambil antrean pasien:", err);

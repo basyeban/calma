@@ -23,12 +23,13 @@ export default function DoctorDashboardPage() {
         .eq("doctor_id", doctorId);
 
       if (!error && consultations && consultations.length > 0) {
-        const queueList = consultations.map((item: any, index: number) => {
+        // Gabungkan/Petakan data awal
+        const rawList = consultations.map((item: any, index: number) => {
           const patientUser = item.patient_profiles?.users;
           return {
             id: item.id || `CLM-00${index + 1}`,
-            name: patientUser?.full_name || "Pasien",
-            time: item.time_slot || "10:00 - 11:00",
+            name: patientUser?.full_name || item.patient_name || "Pasien",
+            time: item.time_slot || item.consultation_time || "10:00 - 11:00",
             type: "Video Call",
             status: item.status === "completed" ? "Selesai" : "Sedang Berlangsung",
             ageGender: `${item.patient_profiles?.gender || "Laki-laki"}`,
@@ -38,29 +39,48 @@ export default function DoctorDashboardPage() {
           };
         });
 
+        // -------------------------------------------------------------------
+        // LOGIKA AGAR NAMA PASIEN YANG SAMA DIHITUNG 1 (UNIQUE BY NAME)
+        // -------------------------------------------------------------------
+        const uniquePatientsMap = new Map();
+        rawList.forEach((patient: { name: string; }) => {
+          const cleanName = patient.name.trim().toLowerCase();
+          // Simpan hanya data pertama yang ditemukan untuk nama yang sama
+          if (!uniquePatientsMap.has(cleanName)) {
+            uniquePatientsMap.set(cleanName, patient);
+          }
+        });
+
+        const queueList = Array.from(uniquePatientsMap.values());
+        // -------------------------------------------------------------------
+
         const dashboardResult = {
           doctor_name: "Dr. Danuar Ilham, Sp.KJ",
           stats: {
-            total_patients_today: queueList.length,
+            total_patients_today: queueList.length, // Sekarang menghitung jumlah pasien unik
             completed_sessions: queueList.filter((q: any) => q.status === "Selesai").length,
             tomorrow_sessions: 1,
             waiting_patients: 0,
             ongoing_patients: queueList.filter((q: any) => q.status === "Sedang Berlangsung").length,
-            completion_rate: 100,
+            completion_rate: queueList.length > 0 
+              ? Math.round((queueList.filter((q: any) => q.status === "Selesai").length / queueList.length) * 100) 
+              : 0,
           },
           queue: queueList,
         };
 
         setData(dashboardResult);
-        setSelectedPatient({
-          id: queueList[0].id,
-          name: queueList[0].name,
-          ageGender: queueList[0].ageGender,
-          photo: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?q=80&w=150",
-          diagnosis: queueList[0].diagnosis,
-          note: queueList[0].note,
-          anxietyScore: queueList[0].anxietyScore,
-        });
+        if (queueList.length > 0) {
+          setSelectedPatient({
+            id: queueList[0].id,
+            name: queueList[0].name,
+            ageGender: queueList[0].ageGender,
+            photo: "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?q=80&w=150",
+            diagnosis: queueList[0].diagnosis,
+            note: queueList[0].note,
+            anxietyScore: queueList[0].anxietyScore,
+          });
+        }
         setLoading(false);
         return;
       }
@@ -182,12 +202,12 @@ export default function DoctorDashboardPage() {
 
       {/* Main Grid: Antrean & Detail Pasien */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Left: Antrean Pasien (Hanya 1 Pasien) */}
+        {/* Left: Antrean Pasien Unik */}
         <div className="lg:col-span-2 bg-white rounded-2xl border border-gray-100 p-6 shadow-sm space-y-4">
           <div className="flex justify-between items-center pb-2">
             <div>
               <h3 className="text-sm font-bold text-slate-900">Antrean Pasien Aktif</h3>
-              <p className="text-[11px] text-gray-400">Daftar pasien yang terhubung ke jadwal Anda</p>
+              <p className="text-[11px] text-gray-400">Daftar pasien unik yang terhubung ke jadwal Anda</p>
             </div>
             <button
               onClick={fetchDashboardData}
@@ -202,7 +222,7 @@ export default function DoctorDashboardPage() {
             <table className="w-full text-left text-xs">
               <thead>
                 <tr className="border-b border-gray-100 text-[11px] font-semibold text-gray-400 uppercase">
-                  <th className="py-2.5">No</th>
+                  <th className="py-2.5 px-2">No</th>
                   <th className="py-2.5">Nama Pasien</th>
                   <th className="py-2.5">Waktu</th>
                   <th className="py-2.5">Jenis Sesi</th>
@@ -211,7 +231,7 @@ export default function DoctorDashboardPage() {
               </thead>
               <tbody className="divide-y divide-gray-50">
                 {queue && queue.map((row: any, index: number) => {
-                  const isActive = row.status === "Sedang Berlangsung";
+                  const isActive = selectedPatient?.id === row.id;
                   return (
                     <tr
                       key={row.id || index}

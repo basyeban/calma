@@ -24,21 +24,9 @@ import {
   FileCheck,
   Image as ImageIcon
 } from "lucide-react";
-import { realtimeChannel, removeRealtimeChannel, firebaseService, listenIncomingCalls } from "@/lib/firebase";
+import { ref, onValue, remove, update } from "firebase/database";
+import { rtdb, firebaseService } from "@/lib/firebase";
 import ConsultationVideoCall from "@/components/ConsultationVideoCall";
-import { onValue, ref, update, type DataSnapshot } from "firebase/database";
-import { rtdb } from "@/lib/firebase";
-
-// Fungsi ketika Dokter klik tombol Panggil Pasien
-const handleCallPatient = async (consultationId: string) => {
-  const consultRef = ref(rtdb, `consultations/${consultationId}`);
-  
-  // Ubah status agar pasien menerima notifikasi panggilan masuk
-  await update(consultRef, {
-    status: "calling", // atau "in_session" jika ingin pasien langsung masuk tanpa perlu pencet 'Terima'
-    updatedAt: Date.now(),
-  });
-};
 
 /** Mencegah tombol pembayaran terus berputar jika request tidak merespons. */
 function withTimeout<T>(
@@ -89,7 +77,6 @@ export default function PatientConsultationPage() {
   const [isIncomingCall, setIsIncomingCall] = useState(false);
 
   // WebRTC & Media States
-
   const [messages, setMessages] = useState([
     { id: 1, sender: "doctor", text: "Halo, selamat pagi. Bagaimana kabar dan perasaan kamu hari ini?", time: "10:01" },
     { id: 2, sender: "patient", text: "Pagi Dok. Hari ini merasa sedikit lebih tenang.", time: "10:02" },
@@ -167,28 +154,34 @@ export default function PatientConsultationPage() {
     }
   };
 
-// SYSTEM NOTIFIKASI PANGGILAN REAL-TIME PASIEN
+  // SYSTEM NOTIFIKASI PANGGILAN REAL-TIME PASIEN
   useEffect(() => {
     const activeId = consultationId || localStorage.getItem("active_consultation_id");
     if (!activeId) return;
 
-    // 1. Listen perubahan pada node /consultations/{id}
+    // 1. Listen status pada /consultations/{activeId}
     const consultRef = ref(rtdb, `consultations/${activeId}`);
     const unsubscribeConsult = onValue(consultRef, (snapshot) => {
       if (snapshot.exists()) {
         const data = snapshot.val();
-        if (data.status === "calling" || data.status === "in_session" || data.status === "active") {
+        if (data.status === "calling") {
           setIsIncomingCall(true);
+        } else if (data.status === "in_session" || data.status === "active") {
+          setIsIncomingCall(false);
+          setActiveTab("live");
+        } else if (data.status === "rejected" || data.status === "completed" || data.status === "cancelled") {
+          setIsIncomingCall(false);
         }
       }
     });
 
-    // 2. Listen perubahan pada node /calls/{id} (yang baru saja diakses dokter)
+    // 2. Listen pemicu dari node /calls/{activeId}
     const callRef = ref(rtdb, `calls/${activeId}`);
     const unsubscribeCall = onValue(callRef, (snapshot) => {
       if (snapshot.exists()) {
-        // Jika data call ada / dokter memulai panggilan
         setIsIncomingCall(true);
+      } else {
+        setIsIncomingCall(false);
       }
     });
 
@@ -196,7 +189,27 @@ export default function PatientConsultationPage() {
       unsubscribeConsult();
       unsubscribeCall();
     };
-  }, [consultationId]);
+  }, [consultationId, activeTab]);
+
+  // FUNGSI UNTUK MENOLAK PANGGILAN DOKTER & MEMBERSIHKAN DATABASE
+  const handleRejectCall = async () => {
+    setIsIncomingCall(false);
+    const activeId = consultationId || localStorage.getItem("active_consultation_id");
+
+    if (activeId) {
+      try {
+        // Hapus node calls agar tidak memicu pop-up lagi saat refresh
+        const callRef = ref(rtdb, `calls/${activeId}`);
+        await remove(callRef);
+
+        // Ubah status di /consultations/{id} menjadi 'rejected'
+        const consultRef = ref(rtdb, `consultations/${activeId}`);
+        await update(consultRef, { status: "rejected" });
+      } catch (err) {
+        console.error("Gagal memperbarui status penolakan panggilan:", err);
+      }
+    }
+  };
 
   const handleSendMessage = (e: React.FormEvent) => {
     e.preventDefault();
@@ -226,8 +239,6 @@ export default function PatientConsultationPage() {
     setActiveTab("payment");
   };
 
-  // Simpan konsultasi dan pembayaran. Jangan gunakan ID fallback palsu karena
-  // dokter dan pasien wajib memakai ID konsultasi yang sama dari backend.
   const handleSubmitPaymentProof = async (e: React.FormEvent) => {
     e.preventDefault();
 
@@ -273,8 +284,6 @@ export default function PatientConsultationPage() {
           doctor_name: bookedDoctor.name || "Dokter Calma",
           amount: bookedDoctor.priceNum || 250000,
           payment_method: paymentMethod.toUpperCase(),
-          // URL object hanya untuk preview. Integrasi produksi harus mengunggah
-          // file ke storage dan menyimpan URL permanen.
           proof_url: uploadPreview,
           status: "pending_verification",
         }),
@@ -291,9 +300,19 @@ export default function PatientConsultationPage() {
     }
   };
 
-  const handleAcceptCall = () => {
+  const handleAcceptCall = async () => {
     setIsIncomingCall(false);
     setActiveTab("live");
+
+    const activeId = consultationId || localStorage.getItem("active_consultation_id");
+    if (activeId) {
+      try {
+        const consultRef = ref(rtdb, `consultations/${activeId}`);
+        await update(consultRef, { status: "in_session" });
+      } catch (err) {
+        console.error("Gagal memperbarui status ke in_session:", err);
+      }
+    }
   };
 
   return (
@@ -748,7 +767,7 @@ export default function PatientConsultationPage() {
 
             <div className="grid grid-cols-2 gap-3 pt-2">
               <button
-                onClick={() => setIsIncomingCall(false)}
+                onClick={handleRejectCall}
                 className="py-3 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-2xl text-xs font-bold transition flex items-center justify-center gap-1.5"
               >
                 <PhoneOff className="w-4 h-4 text-rose-600" /> Tolak

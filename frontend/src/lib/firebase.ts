@@ -557,6 +557,7 @@ async createPayment(payload: {
  * =========================================================================
  */
 class FirebaseQueryBuilder {
+  [x: string]: any;
   private tableName: string;
   private filters: Array<(item: any) => boolean> = [];
   private orderField: string | null = null;
@@ -738,7 +739,7 @@ class FirebaseQueryBuilder {
     };
   }
 
-  async upsert(values: any): Promise<{ error: any }> {
+  async upsert(values: any, p0: { onConflict: string; }): Promise<{ error: any }> {
     try {
       const id = values.id || `${values.doctor_id}_${values.date || Date.now()}`;
       await set(ref(rtdb, `${this.tableName}/${id}`), values);
