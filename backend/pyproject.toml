@@ -1,0 +1,10 @@
+[project]
+name = "calma-mental-health-api"
+version = "1.0.0"
+requires-python = ">=3.12"
+
+[tool.vercel]
+entrypoint = "app.main:app"
+
+[tool.vercel.fastapi.static]
+cdn = false
