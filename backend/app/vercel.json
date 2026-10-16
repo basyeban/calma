@@ -1,9 +1,14 @@
 {
   "version": 2,
-  "rewrites": [
+  "functions": {
+    "main.py": {
+      "maxDuration": 10
+    }
+  },
+  "routes": [
     {
-      "source": "/(.*)",
-      "destination": "/main.py"
+      "src": "/(.*)",
+      "dest": "main.py"
     }
   ]
 }
