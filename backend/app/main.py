@@ -14,11 +14,11 @@ app = FastAPI(
     version="1.0.0"
 )
 
-# 1. Buat folder penyimpan file upload foto
-os.makedirs("static/uploads/doctor", exist_ok=True)
+# # 1. Buat folder penyimpan file upload foto
+# os.makedirs("static/uploads/doctor", exist_ok=True)
 
-# 2. Mount folder static untuk URL publik
-app.mount("/static", StaticFiles(directory="static"), name="static")
+# # 2. Mount folder static untuk URL publik
+# app.mount("/static", StaticFiles(directory="static"), name="static")
 
 # 3. Konfigurasi CORS Origin
 origins = [
