@@ -7,9 +7,3 @@ dependencies = [
     "uvicorn==0.54.0",
     "python-dotenv==1.2.4",
 ]
-
-[tool.vercel]
-entrypoint = "app/main.py"
-
-[tool.vercel.fastapi.static]
-cdn = false
