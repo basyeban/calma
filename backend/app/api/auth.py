@@ -30,7 +30,6 @@ class RegisterSchema(BaseModel):
 
 
 class LoginSchema(BaseModel):
-    # Mengubah ke str biasa agar tidak error 422 saat menerima username 'admin'
     email: str  
     password: str
 
@@ -103,7 +102,6 @@ def register_patient(payload: RegisterSchema, db: Session = Depends(get_db)):
 
 @router.post("/login")
 def login(payload: LoginSchema, db: Session = Depends(get_db)):
-    # 1. VERIFIKASI AKUN SUPER ADMIN KHUSUS
     if payload.email == "admin" and payload.password == "adminudb":
         access_token = create_access_token(
             data={"sub": "admin-super-1", "role": "ADMIN"}
@@ -115,7 +113,6 @@ def login(payload: LoginSchema, db: Session = Depends(get_db)):
             "full_name": "Budi Santoso"
         }
 
-    # 2. VERIFIKASI USER BIASA DARI DATABASE
     user = db.query(User).filter(User.email == payload.email).first()
 
     if not user:
