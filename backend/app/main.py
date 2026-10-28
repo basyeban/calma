@@ -6,6 +6,11 @@ from app.api.auth import router as auth_router
 
 app = FastAPI(title="API Klinik")
 
+origins = [
+    "http://localhost:3000",
+    "https://calma-app-omega.vercel.app", # Tambahkan domain Vercel Anda di sini
+]
+
 # 2. KONFIGURASI CORS (Mengatasi error akses dari http://localhost:3000)
 app.add_middleware(
     CORSMiddleware,
