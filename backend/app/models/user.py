@@ -4,7 +4,6 @@ from sqlalchemy.orm import Session
 
 # Sesuaikan path import ini dengan struktur folder project Anda
 from app.db.session import get_db
-from app.models.user import User  # Ini mengambil file user.py Anda
 
 # Asumsi Anda memiliki file security.py untuk mengurus hashing password
 # Jika belum ada, Anda bisa menggunakan library passlib (contoh di bawah)
