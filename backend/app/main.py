@@ -1,28 +1,23 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-# Asumsi struktur folder Anda:
-# app/
-#  ├── main.py
-#  └── api/
-#       └── auth.py
-
-# 1. IMPORT DARI FOLDER YANG TEPAT (Pilih salah satu yang sesuai dengan folder Anda)
-# Jika auth.py ada di dalam folder app/api:
+# 1. IMPORT DARI FOLDER YANG TEPAT (sesuai struktur folder backend/app/api/auth.py)
 from app.api.auth import router as auth_router
-
-# ATAU, jika auth.py satu folder (sebelahan) dengan main.py:
-# from auth import router as auth_router
 
 app = FastAPI(title="API Klinik")
 
+# 2. KONFIGURASI CORS (Mengatasi error akses dari http://localhost:3000)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["*"],  # Atau ganti dengan ["http://localhost:3000"] untuk lebih spesifik
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# 2. DAFTARKAN ROUTER
+# 3. DAFTARKAN ROUTER
 app.include_router(auth_router)
+
+@app.get("/")
+def read_root():
+    return {"message": "Backend FastAPI Berjalan dengan Baik!"}
