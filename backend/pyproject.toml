@@ -3,11 +3,12 @@ name = "calma-mental-health-api"
 version = "1.0.0"
 requires-python = ">=3.12"
 dependencies = [
-    "fastapi==0.142.2",
-    "uvicorn==0.54.0",
-    "python-dotenv==1.2.4",
+    "fastapi",
+    "uvicorn",
+    "python-dotenv",
     "sqlalchemy",
     "psycopg[binary]",
     "python-jose[cryptography]",
-    "passlib[bcrypt]"
+    "passlib[bcrypt]",
+    "email-validator"
 ]
