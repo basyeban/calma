@@ -7,6 +7,7 @@ dependencies = [
     "uvicorn==0.54.0",
     "python-dotenv==1.2.4",
     "sqlalchemy",
-    "psycopg2-binary",
-    "python-jose[cryptography]"
+    "psycopg[binary]",
+    "python-jose[cryptography]",
+    "passlib[bcrypt]"
 ]
